@@ -30,7 +30,6 @@ This system is sensitive to lighting conditions. Please operate in a well-lit an
 ├── best_model.h5 # 手寫數字模型（請自行放置） / Digit model (place manually)
 ├── symbol.h5 # 符號辨識模型（選用） / Symbol recognition model (optional)
 ├── augmented_model.h5 # 字母辨識模型（請自行放置） / Alphabet model (place manually)
-
 ***
 
 ## 操作說明 / How to Use
@@ -70,7 +69,7 @@ Place the models under C:/hand/ or modify the path accordingly in the code:
 
 best_model.h5：數字辨識模型 / Digit recognition model
 
-symbol.h5：符號辨識模型 / Symbol recognition model (optional)
+symbol.h5：符號辨識模型（選用） / Symbol recognition model (optional)
 
 augmented_model.h5：字母辨識模型 / Alphabet model (place manually)
 
