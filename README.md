@@ -23,35 +23,6 @@ This system is sensitive to lighting conditions. Please operate in a well-lit an
 ***
 
 ## 📁 專案結構 / Project Structure
-好的，這就是剛才回覆的 Markdown 原始語法：
-
-Markdown
-
-# ✋ Hand Gesture Drawing Recognition System
-# ✍️ 空中手勢繪圖辨識系統
-
-***
-
-## ⚠️ 注意 / Note:
-
-本系統對光線變化較為敏感，請在光線均勻的環境中操作，以確保辨識效果穩定。
-This system is sensitive to lighting conditions. Please operate in a well-lit and evenly illuminated environment to ensure stable recognition.
-
-***
-
-## 🧠 功能簡介 / Features
-
-* ✍️ 手勢空中繪圖 / Air drawing using hand gestures
-* 🔢 支援數字辨識（0–9） / Digit recognition (0–9)
-* 🔤 支援英文字母辨識（A–Z） / Alphabet recognition (A–Z)
-* 📷 攝影機即時影像處理 / Real-time webcam image processing
-* 🤚 利用 MediaPipe 偵測與追蹤手部 / Hand tracking with MediaPipe
-* 🧽 擦除、清除畫布功能 / Eraser and canvas reset
-* 🧠 使用 TensorFlow Keras 預訓練模型進行辨識 / Digit & letter prediction via pre-trained TensorFlow models
-
-***
-
-## 📁 專案結構 / Project Structure
 
 .
 ├── digit.py         # 數字/符號手勢繪圖主程式 / Main script for digit/symbol recognition
