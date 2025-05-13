@@ -5,7 +5,7 @@
 
 ## ⚠️ 注意 / Note:
 
-本系統對光線變化較為敏感，請在光線均勻的環境中操作，以確保辨識效果穩定。
+本系統對光線變化較為敏感，請在光線均勻的環境中操作，以確保辨識效果穩定。  
 This system is sensitive to lighting conditions. Please operate in a well-lit and evenly illuminated environment to ensure stable recognition.
 
 ***
@@ -25,21 +25,21 @@ This system is sensitive to lighting conditions. Please operate in a well-lit an
 ## 📁 專案結構 / Project Structure
 
 .
-├── digit.py         # 數字/符號手勢繪圖主程式 / Main script for digit/symbol recognition
-├── letter.py        # 英文字母手勢繪圖主程式 / Main script for letter recognition
-├── best_model.h5    # 手寫數字模型（請自行放置） / Digit model (place manually)
-├── symbol.h5        # 符號辨識模型（選用） / Symbol model (optional)
+├── digit.py # 數字/符號手勢繪圖主程式 / Main script for digit/symbol recognition
+├── letter.py # 英文字母手勢繪圖主程式 / Main script for letter recognition
+├── best_model.h5 # 手寫數字模型（請自行放置） / Digit model (place manually)
+├── symbol.h5 # 符號辨識模型（選用） / Symbol recognition model (optional)
 ├── augmented_model.h5 # 字母辨識模型（請自行放置） / Alphabet model (place manually)
 
 ***
 
 ## 操作說明 / How to Use
 
-1.  執行 digit.py 或 letter.py / Run either digit.py or letter.py
+1.  執行 `digit.py` 或 `letter.py` / Run either `digit.py` or `letter.py`
 2.  用食指在空中進行繪圖 / Draw in the air using your index finger
 3.  食指與中指靠近 → 停止繪圖 / Pinch index and middle finger to stop drawing
 4.  握拳 → 啟動橡皮擦功能 / Fist gesture to erase
-5.  點擊畫面上方按鈕清除畫布 / Click Clear-c to clear canvas
+5.  點擊畫面上方按鈕清除畫布 / Click `Clear-c` to clear canvas
 6.  可切換數字/符號或字母模式 / Switch between digit/symbol or letter mode
 
 ***
@@ -55,10 +55,10 @@ This system is sensitive to lighting conditions. Please operate in a well-lit an
 ## 🔧 系統需求 / Requirements
 
 * Python >= 3.7
-* OpenCV (opencv-python)
-* TensorFlow (tensorflow)
-* MediaPipe (mediapipe)
-* NumPy
+* OpenCV (`opencv-python`)
+* TensorFlow (`tensorflow`)
+* MediaPipe (`mediapipe`)
+* NumPy (`numpy`)
 
 ## 📦 安裝套件 / Install dependencies:
 
@@ -69,8 +69,11 @@ pip install opencv-python mediapipe tensorflow numpy
 Place the models under C:/hand/ or modify the path accordingly in the code:
 
 best_model.h5：數字辨識模型 / Digit recognition model
-symbol.h5：符號辨識模型（選用） / Symbol recognition model (optional)
-augmented_model.h5：字母辨識模型 / Alphabet recognition model
+
+symbol.h5：符號辨識模型 / Symbol recognition model (optional)
+
+augmented_model.h5：字母辨識模型 / Alphabet model (place manually)
+
 📄 授權 / License
 本專案採用 MIT License 授權。
 This project is licensed under the MIT License.
