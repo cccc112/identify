@@ -22,16 +22,6 @@ This system is sensitive to lighting conditions. Please operate in a well-lit an
 
 ***
 
-## 📁 專案結構 / Project Structure
-
-.
-├── digit.py # 數字/符號手勢繪圖主程式 / Main script for digit/symbol recognition
-├── letter.py # 英文字母手勢繪圖主程式 / Main script for letter recognition
-├── best_model.h5 # 手寫數字模型（請自行放置） / Digit model (place manually)
-├── symbol.h5 # 符號辨識模型（選用） / Symbol recognition model (optional)
-├── augmented_model.h5 # 字母辨識模型（請自行放置） / Alphabet model (place manually)
-***
-
 ## 操作說明 / How to Use
 
 1.  執行 `digit.py` 或 `letter.py` / Run either `digit.py` or `letter.py`
