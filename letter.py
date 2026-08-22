@@ -9,30 +9,8 @@ from tensorflow.keras.preprocessing.image import img_to_array
 # 載入訓練好的模型
 letter_model = tf.keras.models.load_model("C:/hand/augmented_model.h5")
 # 類別名稱映射
-class_names = ['A', 'B', 'C','D','E','F','G','H','I','J','K','L','M','N','O','P','Q','R','S','T','U','V','W','X','Y','Z']
-recognition_area = (100, 100, 540, 380) # (x_min, y_min, x_max, y_max)
-
-# --- 顏色定義 (可以自訂這些顏色) ---
-COLOR_WHITE = (255, 255, 255)
-COLOR_BLACK = (0, 0, 0)
-COLOR_RED = (0, 0, 255)
-COLOR_GREEN = (0, 255, 0)
-COLOR_BLUE = (255, 0, 0)
-COLOR_GRAY = (100, 100, 100)
-COLOR_LIGHT_GRAY = (200, 200, 200)
-COLOR_DARK_GRAY = (50, 50, 50)
-COLOR_YELLOW = (0, 255, 255)
-COLOR_ORANGE = (0, 165, 255)
-
-# UI 相關顏色
-UI_BG_COLOR = COLOR_DARK_GRAY
-BUTTON_COLOR_NORMAL = (90, 90, 90) # 更深的灰色
-BUTTON_COLOR_HOVER = (120, 120, 120) # 鼠標懸停效果
-TEXT_COLOR = COLOR_WHITE
-ACCENT_COLOR = COLOR_ORANGE # 用於強調或準星
-DRAWING_COLOR = COLOR_BLUE # 繪圖顏色
-
-# --- 輔助函數 (不變) ---
+class_names = ['A', 'B', 'C','D','E','F','G','H','I','J','K','L','M','N','O','P','Q','R','S','T','U','V','W','X','Y','Z']  # 這里列出所有英文字母
+recognition_area = (100, 100, 540, 380)
 def normalize_lighting(image):
     lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
     l, a, b = cv2.split(lab)
@@ -44,471 +22,567 @@ def normalize_lighting(image):
 
 def adaptive_threshold(image):
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    thresh = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2)
+    thresh = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                                   cv2.THRESH_BINARY, 11, 2)
     return thresh
 
-def is_hand_in_recognition_area(hand_landmarks, area):
-    if not hand_landmarks:
-        return False
-    # 使用食指尖端作為判斷點
-    tip_x = int(hand_landmarks.landmark[mp_hands.HandLandmark.INDEX_FINGER_TIP].x * image_width)
-    tip_y = int(hand_landmarks.landmark[mp_hands.HandLandmark.INDEX_FINGER_TIP].y * image_height)
-    x_min, y_min, x_max, y_max = area
-    return x_min < tip_x < x_max and y_min < tip_y < y_max
+def preprocess_image(image, size=(64, 64)):
+    # 将图像转换为灰度图
+    image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    # 反转图像颜色（如果需要）
+    image = cv2.bitwise_not(image)
+    # 调整大小以适应模型输入
+    image = cv2.resize(image, size)
+    # 转换回3通道BGR格式
+    image = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
+    # 将图像转换为数组
+    image = img_to_array(image)
+    # 增加一个维度
+    image = np.expand_dims(image, axis=0)
+    # 归一化像素值
+    image = image / 255.0
+    # 保存预处理图像用于调试
+    cv2.imwrite("C:/hand/test.png", image[0] * 255)
+    return image
 
-def preprocess_image(image_roi):
-    # 將圖像轉換為灰度
-    gray_roi = cv2.cvtColor(image_roi, cv2.COLOR_BGR2GRAY)
-    # 反轉顏色（因為模型可能是在黑色背景上訓練的白色字母）
-    inverted_roi = cv2.bitwise_not(gray_roi)
-    # 調整大小以匹配模型輸入
-    resized_roi = cv2.resize(inverted_roi, (64, 64), interpolation=cv2.INTER_AREA)
-    # 擴展維度以匹配模型輸入 (batch_size, height, width, channels)
-    normalized_roi = resized_roi / 255.0 # 歸一化到 0-1
-    return normalized_roi.reshape(1, 64, 64, 1)
+# 預處理圖像
+def make_prediction(image, model):
+    preprocessed_image = preprocess_image(image)
+    prediction = model.predict(preprocessed_image)
+    return np.argmax(prediction), np.max(prediction)
+# 創建一個空白圖像來顯示數字
 
-def detect_shapes_and_predict(drawing_layer, model, class_names):
-    # 轉換為灰度並找到輪廓
-    gray_layer = cv2.cvtColor(drawing_layer, cv2.COLOR_BGR2GRAY)
-    # 使用大津法或自適應閾值處理以獲得清晰的二值圖像
-    _, thresh = cv2.threshold(gray_layer, 50, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU) # 閾值調整
+def update_digit_window(grid_digits):
+    digit_image = np.zeros((400, 400, 3), dtype=np.uint8)
+    text_color = (255, 255, 255)
+    font_scale = 0.7
+    thickness = 2
+    labels = ['Units', 'Tens', 'Hundreds', 'Thousands', 'Ten Thousands', 'Hundred Thousands', 'Millions', 'Ten Millions']
+    max_display_digits = 10
+
+    for i, (label, digits) in enumerate(zip(labels, grid_digits)):
+        display_digits = digits[-max_display_digits:]
+        text = f'{label} ({i+1}): {" ".join(map(str, display_digits))}'
+        cv2.putText(digit_image, text, (10, 30 + i * 30), cv2.FONT_HERSHEY_SIMPLEX, font_scale, text_color, thickness)
+    return digit_image
+
+def draw_grid(canvas, num_rows=4, num_cols=2, color=(200, 200, 200), thickness=1):
+    # 獲取畫布的高度和寬度
+    height, width = canvas.shape[:2]
+    # 計算每行和每列的高度和寬度
+    row_height = height // num_rows
+    col_width = width // num_cols
+    # 繪製垂直線
+    for x in range(0, width, col_width):
+        cv2.line(canvas, (x, 0), (x, height), color, thickness)
+    
+    for y in range(0, height, row_height):
+        cv2.line(canvas, (0, y), (width, y), color, thickness)
+        '''
+    for i in range(num_rows):
+        for j in range(num_cols):
+            grid_index = i * num_cols + j
+            text_position = (j * col_width + 10, i * row_height + 30)
+            text = f'{grid_index + 1}'
+            cv2.putText(canvas, text, text_position, cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+        '''
+def draw_hand_tracking_grid(image, num_rows=4, num_cols=2, color=(200, 200, 200), thickness=1):
+    height, width = image.shape[:2]
+    row_height = height // num_rows
+    col_width = width // num_cols
+    for x in range(0, width, col_width):
+        cv2.line(image, (x, 0), (x, height), color, thickness)
+    for y in range(0, height, row_height):
+        cv2.line(image, (0, y), (width, y), color, thickness)
+
+def draw_control_panel(image, width, height):
+    # 設定控制面板的高度和顏色
+    panel_height = 50
+    panel_color = (240, 255, 255)
+    button_color = (200, 200, 200)
+    border_color = (255, 0, 0)  
+    button_size = (100, 40)
+    alpha = 0.7  
+
+    # 繪製控制面板背景
+    cv2.rectangle(image, (0, 0), (width, panel_height), panel_color, 1)
+    
+    # 定義按鈕區域
+    button_area_clear = (10, 5, 10 + button_size[0], panel_height - 5)
+    button_area_save = (140, 5, 140 + button_size[0], panel_height - 5)
+    button_area_delete = (270, 5, 270 + button_size[0], panel_height - 5)
+    
+    # 使用半透明的白色按鈕
+    overlay = image.copy()
+    for button_area in [button_area_clear]:
+        cv2.rectangle(overlay, button_area[:2], button_area[2:], button_color, 1)
+        cv2.rectangle(overlay, button_area[:2], button_area[2:], border_color, 2)  # 畫外框
+    cv2.addWeighted(overlay, alpha, image, 1 - alpha, 0, image)
+    
+    # 添加按鈕文字
+    cv2.putText(image, 'Clear-c', (20, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2)
+    '''
+    cv2.putText(image, 'Save-s', (150, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2)
+    cv2.putText(image, 'Delete-d', (280, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2)
+    '''
+    return button_area_clear, button_area_save, button_area_delete
+def get_grid_position(x, y, width, height, num_rows=4, num_cols=2):
+    # 計算每個格子的寬度和高度
+    grid_width = width // num_cols
+    grid_height = height // num_rows
+    # 計算點擊位置所在的列和行
+    col = x // grid_width
+    row = y // grid_height
+    return row * num_cols + col
+
+def draw_grid_info(image, grid_counts, width, height, num_rows=4, num_cols=2):
+    grid_width = width // num_cols
+    grid_height = height // num_rows
+    for i in range(num_rows):
+        for j in range(num_cols):
+            grid_index = i * num_cols + j
+            text_position = (j * grid_width + 10, i * grid_height + 30)
+
+#繪製邊界框
+def draw_bounding_box(image, points, color=(0, 0, 255), thickness=2):
+    x_coords = [p[0] for p in points]
+    y_coords = [p[1] for p in points]
+    if len(x_coords) > 0 and len(y_coords) > 0:
+        x_min = min(x_coords)
+        x_max = max(x_coords)
+        y_min = min(y_coords)
+        y_max = max(y_coords)
+        cv2.rectangle(image, (x_min, y_min), (x_max, y_max), color, thickness)
+
+def detect_shapes_and_predict(drawing_layer, letter_model):
+    gray = cv2.cvtColor(drawing_layer, cv2.COLOR_BGR2GRAY)
+    _, thresh = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY)
     contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-    predictions = []
-    min_contour_area = 50 # 忽略太小的雜訊點
-
-    # 合併靠近的邊界框的閾值（像素）
-    merge_threshold = 30
-
-    # 存儲候選框
-    candidate_boxes = []
-    for contour in contours:
-        if cv2.contourArea(contour) > min_contour_area:
-            x, y, w, h = cv2.boundingRect(contour)
-            candidate_boxes.append((x, y, w, h))
-
-    # 合併重疊或非常接近的邊界框
+    kernel = np.ones((3,3),np.uint8)
+    '''
+    dilated = cv2.dilate(thresh, kernel, iterations=1)
+    '''
+    bounding_boxes = [cv2.boundingRect(c) for c in contours]
+    
+    merge_threshold = 70  
+    
     merged_boxes = []
-    while candidate_boxes:
-        current_box = candidate_boxes.pop(0)
-        x1, y1, w1, h1 = current_box
-        x1_end, y1_end = x1 + w1, y1 + h1
+    for box in bounding_boxes:
+        x, y, w, h = box
         merged = False
-
-        for i, (mx, my, mw, mh) in enumerate(merged_boxes):
-            mx_end, my_end = mx + mw, my + mh
-
-            # 檢查是否重疊或足夠接近以合併
-            if not (x1_end < mx - merge_threshold or
-                    mx_end < x1 - merge_threshold or
-                    y1_end < my - merge_threshold or
-                    my_end < y1 - merge_threshold):
-                # 合併
-                new_x = min(x1, mx)
-                new_y = min(y1, my)
-                new_w = max(x1_end, mx_end) - new_x
-                new_h = max(y1_end, my_end) - new_y
-                merged_boxes[i] = (new_x, new_y, new_w, new_h)
+        for merged_box in merged_boxes:
+            mx, my, mw, mh = merged_box
+            box_center = (x + w // 2, y + h // 2)
+            merged_center = (mx + mw // 2, my + mh // 2)
+            distance = np.sqrt((box_center[0] - merged_center[0]) ** 2 + (box_center[1] - merged_center[1]) ** 2)
+            if distance < merge_threshold:
+                new_box = (
+                    min(x, mx),
+                    min(y, my),
+                    max(x + w, mx + mw) - min(x, mx),
+                    max(y + h, my + mh) - min(y, my)
+                )
+                merged_boxes.remove(merged_box)
+                merged_boxes.append(new_box)
                 merged = True
                 break
         if not merged:
-            merged_boxes.append(current_box)
-
-    # 對合併後的邊界框進行預測
-    for (x, y, w, h) in merged_boxes:
-        # 從繪圖層中提取ROI
-        roi = drawing_layer[max(0, y-5):min(drawing_layer.shape[0], y+h+5), max(0, x-5):min(drawing_layer.shape[1], x+w+5)] # 增加一些邊距
-        if roi.size == 0: # 避免空ROI
-            continue
-        
-        preprocessed_roi = preprocess_image(roi)
-        prediction = model.predict(preprocessed_roi, verbose=0)[0]
-        predicted_class = np.argmax(prediction)
-        confidence = np.max(prediction)
-        
-        # 排除低置信度的預測
-        if confidence > 0.8: # 調整置信度閾值
-            predicted_char = class_names[predicted_class]
-            predictions.append((predicted_char, confidence, (x, y, w, h)))
-
+            merged_boxes.append(box)
+    
+    predictions = []
+    for box in merged_boxes:
+        x, y, w, h = box
+        roi = gray[y:y+h, x:x+w]
+        preprocessed_roi = preprocess_image(cv2.cvtColor(cv2.resize(roi, (64, 64)), cv2.COLOR_GRAY2BGR))
+        prediction = letter_model.predict(preprocessed_roi)
+        predicted_label = np.argmax(prediction)
+        predictions.append((box, predicted_label))
+    
+    predictions.sort(key=lambda x: (x[0][1], x[0][0]))
     return predictions
+'''
+def draw_recognized_digits_window(image, recognized_digits, canvas_width, canvas_height, num_digits=8):
+       # Define the position and size of the recognized digits window
+    window_x = canvas_width + 10
+    window_y = 10
+    window_width = 200
+    window_height = 400
 
-# --- 繪圖功能調整 ---
 
-def draw_control_panel(image, current_hand_landmarks, buttons):
-    # 面板背景
-    panel_height = 80
-    panel_y_start = image.shape[0] - panel_height
-    cv2.rectangle(image, (0, panel_y_start), (image.shape[1], image.shape[0]), UI_BG_COLOR, -1)
+def draw_recognized_text_window(image, recognized_texts, canvas_width, canvas_height, num_entries=8):
+    window_x = canvas_width + 10
+    window_y = 10
+    window_width = 200
+    window_height = 400
 
-    cursor_x, cursor_y = -1, -1
-    if current_hand_landmarks:
-        # 使用食指尖作為游標
-        index_tip = current_hand_landmarks.landmark[mp_hands.HandLandmark.INDEX_FINGER_TIP]
-        cursor_x = int(index_tip.x * image.shape[1])
-        cursor_y = int(index_tip.y * image.shape[0])
+    text_image = np.zeros((window_height, window_width, 3), dtype=np.uint8)
+    text_color = (255, 255, 255)
+    font_scale = 0.7
+    thickness = 2
 
-    for btn_name, btn_info in buttons.items():
-        x, y, w, h = btn_info['rect']
-        btn_center_x = x + w // 2
-        btn_center_y = y + h // 2
+    for i, text_entry in enumerate(recognized_texts):
+        if i >= num_entries:
+            break
+        text = f'{i+1}: {text_entry}'
+        cv2.putText(text_image, text, (10, 30 + i * 30), cv2.FONT_HERSHEY_SIMPLEX, font_scale, text_color, thickness)
+    
+    # Display the window with recognized texts
+    combined_image = np.hstack((image, text_image))
+    return combined_image
+'''
+def handle_hand_tracking(hand_landmarks, image):
+    index_finger_tip = hand_landmarks.landmark[8]
+    middle_finger_tip = hand_landmarks.landmark[12]
+    x_index, y_index = int(index_finger_tip.x * image.shape[1]), int(index_finger_tip.y * image.shape[0])
+    x_middle, y_middle = int(middle_finger_tip.x * image.shape[1]), int(middle_finger_tip.y * image.shape[0])
+
+    x_index = np.clip(x_index, 10, image.shape[1] - 10)
+    y_index = np.clip(y_index, 10, image.shape[0] - 10)
+
+    return x_index, y_index, x_middle, y_middle
+def detect_and_predict_image(image, shapes, model):
+    preprocessed_image = preprocess_image(image)
+    prediction = model.predict(preprocessed_image)
+    return np.argmax(prediction), np.max(prediction)
+def is_hand_in_recognition_area(current_points):
+    """檢查手是否在識別區域內"""
+    if not current_points:
+        return False
+    x, y = current_points[-1]
+    return (recognition_area[0] <= x <= recognition_area[2] and
+            recognition_area[1] <= y <= recognition_area[3])
+def draw_prediction_window(image, predictions, canvas_width):
+    window_x = canvas_width + 10
+    window_y = 10
+    window_width = 200
+    window_height = 400
+
+    prediction_image = np.zeros((window_height, window_width, 3), dtype=np.uint8)
+    text_color = (255, 255, 255)
+    font_scale = 0.7
+    thickness = 2
+
+    for i, (box, prediction) in enumerate(predictions):
+        if i >= 10:  # Limit to 10 predictions
+            break
+        text = f'{i+1}: {class_names[prediction]}'
+        cv2.putText(prediction_image, text, (10, 30 + i * 30), cv2.FONT_HERSHEY_SIMPLEX, font_scale, text_color, thickness)
+
+    combined_image = np.hstack((image, prediction_image))
+    return combined_image
+def update_letter_window(predictions, width):
+    max_letters_per_row = 20  # 增加每行显示的字母数，以减少间距
+    letter_height = 30  # 每个字母的高度
+    letter_width = width // max_letters_per_row  # 每个字母的宽度
+    rows = (len(predictions) + max_letters_per_row - 1) // max_letters_per_row  # 计算需要的行数
+    
+    letter_image = np.zeros((rows * letter_height, width, 3), dtype=np.uint8)
+    text_color = (255, 255, 255)
+    font_scale = 0.5  # 减小字体大小
+    thickness = 1  # 减小字体粗细
+    
+    for i, (box, prediction) in enumerate(predictions):
+        row = i // max_letters_per_row
+        col = i % max_letters_per_row
+        x = col * letter_width + 5  # 添加小偏移，避免文字靠边
+        y = row * letter_height + 20
         
-        # 檢查鼠標是否懸停在按鈕上
-        is_hovering = False
-        if cursor_x != -1 and cursor_y != -1 and \
-           x < cursor_x < x + w and y < cursor_y < y + h:
-            is_hovering = True
-            btn_color = BUTTON_COLOR_HOVER
+        text = f'{class_names[prediction]}'
+        cv2.putText(letter_image, text, (x, y), cv2.FONT_HERSHEY_SIMPLEX, font_scale, text_color, thickness)
+    
+    return letter_image
+def is_hand_in_recognition_area(current_points):
+    """檢查手是否在識別區域內"""
+    if not current_points:
+        return False
+    x, y = current_points[-1]
+    return (recognition_area[0] <= x <= recognition_area[2] and
+            recognition_area[1] <= y <= recognition_area[3])
+def handle_hand_tracking(hand_landmarks, image):
+    index_finger_tip = hand_landmarks.landmark[8]
+    middle_finger_tip = hand_landmarks.landmark[12]
+    x_index, y_index = int(index_finger_tip.x * image.shape[1]), int(index_finger_tip.y * image.shape[0])
+    x_middle, y_middle = int(middle_finger_tip.x * image.shape[1]), int(middle_finger_tip.y * image.shape[0])
+
+    x_index = np.clip(x_index, 10, image.shape[1] - 10)
+    y_index = np.clip(y_index, 10, image.shape[0] - 10)
+
+    return x_index, y_index, x_middle, y_middle
+# Adjusting drawing sensitivity
+drawing_threshold = 40  # Decrease to make it more sensitive
+line_thickness = 3  # Reduce thickness for finer lines
+
+# If you apply smoothing, for example:
+def smooth_path(points, alpha=0.2):
+    smoothed_points = []
+    for i in range(len(points)):
+        if i == 0:
+            smoothed_points.append(points[i])
         else:
-            btn_color = BUTTON_COLOR_NORMAL
+            smoothed_point = (alpha * points[i] + (1 - alpha) * smoothed_points[-1])
+            smoothed_points.append(smoothed_point)
+    return smoothed_points
 
-        # 繪製按鈕背景 (圓角效果)
-        radius = 15 # 圓角半徑
-        cv2.rectangle(image, (x + radius, y), (x + w - radius, y + h), btn_color, -1)
-        cv2.rectangle(image, (x, y + radius), (x + w, y + h - radius), btn_color, -1)
-        cv2.circle(image, (x + radius, y + radius), radius, btn_color, -1)
-        cv2.circle(image, (x + w - radius, y + radius), radius, btn_color, -1)
-        cv2.circle(image, (x + radius, y + h - radius), radius, btn_color, -1)
-        cv2.circle(image, (x + w - radius, y + h - radius), radius, btn_color, -1)
-        
-        # 繪製按鈕邊框
-        cv2.rectangle(image, (x + radius, y), (x + w - radius, y + h), COLOR_LIGHT_GRAY, 2)
-        cv2.rectangle(image, (x, y + radius), (x + w, y + h - radius), COLOR_LIGHT_GRAY, 2)
-        cv2.circle(image, (x + radius, y + radius), radius, COLOR_LIGHT_GRAY, 2)
-        cv2.circle(image, (x + w - radius, y + radius), radius, COLOR_LIGHT_GRAY, 2)
-        cv2.circle(image, (x + radius, y + h - radius), radius, COLOR_LIGHT_GRAY, 2)
-        cv2.circle(image, (x + w - radius, y + h - radius), radius, COLOR_LIGHT_GRAY, 2)
+def hand_tracking():
+    recognized_letters = []
+    predictions = []
+    prediction_text = ""
+    alpha = 0.5  # 透明度因子
+    is_drawing_enabled = False  # 初始状态为不绘图
+    button_area_draw = (250, 230, 380, 270)  # 按钮的区域 (x1, y1, x2, y2)
+    erase_start_time = None  # 变量来跟踪橡皮擦触发时间
+    is_erasing = False  # 变量来跟踪是否在橡皮擦模式
+    recognition_area = (100, 100, 540, 380)  # 识别区域 (x1, y1, x2, y2)
+    undo_area = (400, 10, 500, 50)  # 新增：撤销按钮区域
+    mp_hands = mp.solutions.hands  # 初始化MediaPipe手部解决方案
+    hands = mp_hands.Hands(static_image_mode=False,
+                           max_num_hands=2,
+                           min_detection_confidence=0.4,
+                           min_tracking_confidence=0.3)
+    mp_drawing = mp.solutions.drawing_utils
 
+    cap = cv2.VideoCapture(0)  # 打开摄像头
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)  # 设置摄像头分辨率
 
-        # 繪製按鈕文字
-        text_size = cv2.getTextSize(btn_name, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
-        text_x = x + (w - text_size[0]) // 2
-        text_y = y + (h + text_size[1]) // 2
-        cv2.putText(image, btn_name, (text_x, text_y), cv2.FONT_HERSHEY_SIMPLEX, 0.7, TEXT_COLOR, 2)
+    points = []  # 用于存储手部点的列表
+    paths = []  # 用于存储绘图路径的列表
+    drawing = False  # 绘图状态
+    clear_canvas = False  # 清除画布状态
+    hand_in_frame = False  # 手部是否在画面中的状态
+    recognized_digits = [[] for _ in range(8)]  # 用于存储识别数字的列表
+    grid_counts = [0] * 8  # 用于存储每个格子的计数
 
-    return image
+    canvas_width = 640
+    canvas_height = 480
+    canvas_color = (255, 255, 255)
+    canvas = np.full((canvas_height, canvas_width, 3), canvas_color, dtype=np.uint8)
+    drawing_layer = np.zeros_like(canvas)
+    bounding_boxes_layer = np.zeros_like(canvas)  # 创建边界框层
 
-def draw_bounding_box(image, predictions):
-    bounding_boxes_layer = np.zeros_like(image) # 獨立的圖層來繪製邊界框
-    for char, confidence, bbox in predictions:
-        x, y, w, h = bbox
-        # 繪製邊界框
-        cv2.rectangle(bounding_boxes_layer, (x-5, y-5), (x+w+5, y+h+5), ACCENT_COLOR, 2) # 增加邊框寬度
-        # 顯示文字
-        text_label = f"{char} ({confidence:.2f})"
-        font_scale = 0.8
-        font_thickness = 2
-        text_size = cv2.getTextSize(text_label, cv2.FONT_HERSHEY_SIMPLEX, font_scale, font_thickness)[0]
-        text_x = max(0, x - 5) # 調整文字位置，避免出界
-        text_y = max(text_size[1] + 10, y - 10) # 調整文字位置，確保在框上方
-        
-        # 繪製文字背景（讓文字更清晰）
-        cv2.rectangle(bounding_boxes_layer, (text_x, text_y - text_size[1] - 5), (text_x + text_size[0], text_y + 5), ACCENT_COLOR, -1)
-        cv2.putText(bounding_boxes_layer, text_label, (text_x, text_y), cv2.FONT_HERSHEY_SIMPLEX, font_scale, COLOR_BLACK, font_thickness)
-    return bounding_boxes_layer
+    draw_grid(canvas, num_rows=4, num_cols=2, color=(200, 200, 200), thickness=1)  # 在画布上绘制网格
+    crosshair_size = 20
+    crosshair_color = (255, 255, 255)
+    crosshair_thickness = 2
+    erase_radius = 50
+    erase_color = (0, 245, 255)
+    drawing_threshold = 55
+    line_thickness = 5
 
+    is_digit_mode = True
+    undo_cooldown = 0  # 新增：撤销冷却时间
 
-# --- 新增的字母結果顯示視窗優化 ---
-def update_letter_window(predictions, total_width):
-    # 建立一個背景層
-    window_height = 100
-    letter_window = np.zeros((window_height, total_width, 3), dtype=np.uint8)
-    
-    # 繪製背景
-    cv2.rectangle(letter_window, (0,0), (total_width, window_height), UI_BG_COLOR, -1)
-    
-    # 如果有預測結果，則顯示
-    if predictions:
-        # 將所有預測到的字母按順序排列，並合併成一個字串
-        sorted_predictions = sorted(predictions, key=lambda p: p[2][0]) # 按照X座標排序
-        recognized_sequence = "".join([p[0] for p in sorted_predictions])
+    while cap.isOpened():
+        success, image = cap.read()
+        if not success:
+            print("Ignoring empty camera frame.")
+            continue
 
-        font_scale = 1.5 # 放大字體
-        font_thickness = 3 # 加粗字體
-        
-        # 計算文字大小
-        text_size = cv2.getTextSize(recognized_sequence, cv2.FONT_HERSHEY_SIMPLEX, font_scale, font_thickness)[0]
-        
-        # 計算文字位置，使其居中顯示
-        text_x = (total_width - text_size[0]) // 2
-        text_y = (window_height + text_size[1]) // 2
-        
-        cv2.putText(letter_window, recognized_sequence, (text_x, text_y), 
-                    cv2.FONT_HERSHEY_SIMPLEX, font_scale, ACCENT_COLOR, font_thickness) # 使用強調色
-    else:
-        # 顯示提示訊息
-        tip_text = "等待您的手寫輸入..."
-        font_scale = 0.8
-        font_thickness = 1
-        text_size = cv2.getTextSize(tip_text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, font_thickness)[0]
-        text_x = (total_width - text_size[0]) // 2
-        text_y = (window_height + text_size[1]) // 2
-        cv2.putText(letter_window, tip_text, (text_x, text_y),
-                    cv2.FONT_HERSHEY_SIMPLEX, font_scale, COLOR_LIGHT_GRAY, font_thickness)
+        image = cv2.flip(image, 1)  # 翻转图像
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)  # 将图像转换为RGB格式
+        image.flags.writeable = False  # 设置图像为不可写
+        results = hands.process(image)  # 使用MediaPipe处理图像
+        image.flags.writeable = True  # 设置图像为可写
+        image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)  # 将图像转换回BGR格式
 
-    return letter_window
+        # 绘制网格和控制面板
+        draw_hand_tracking_grid(image, num_rows=4, num_cols=2, color=(200, 200, 200), thickness=1)
+        button_area_clear, button_area_save, button_area_delete = draw_control_panel(image, canvas_width, canvas_height)
 
+        # 绘制撤销按钮
+        cv2.rectangle(image, undo_area[:2], undo_area[2:], (0, 255, 0), 2)
+        cv2.putText(image, 'Undo', (undo_area[0]+10, undo_area[1]+30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
 
-# --- 主程式碼 ---
+        if not is_drawing_enabled:
+            # 绘制具有透明效果的"开始绘制"按钮
+            border_color = (255, 0, 0)  # Blue border color in BGR
+            border_thickness = 2
+            overlay = image.copy()
+            cv2.rectangle(overlay, button_area_draw[:2], button_area_draw[2:], (255, 255, 255), 1)
+            cv2.rectangle(overlay, button_area_draw[:2], button_area_draw[2:], border_color, border_thickness)
+            cv2.putText(overlay, 'Start Draw', (button_area_draw[0] + 10, button_area_draw[1] + 30),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2)
+            cv2.addWeighted(overlay, alpha, image, 1 - alpha, 0, image)
 
-mp_hands = mp.solutions.hands
-hands = mp_hands.Hands(
-    static_image_mode=False,
-    max_num_hands=1,
-    min_detection_confidence=0.7,
-    min_tracking_confidence=0.6)
+        current_points = []
 
-cap = cv2.VideoCapture(0)
+        if results.multi_hand_landmarks:
+            hand_in_frame = True
+            for hand_landmarks in results.multi_hand_landmarks:
+                mp_drawing.draw_landmarks(image, hand_landmarks, mp_hands.HAND_CONNECTIONS)
 
-# 初始化畫布和繪圖相關變數
-canvas = None
-drawing_layer = None
-current_points = []
-paths = []
-predictions = [] # 儲存預測結果
-recognized_letters = [] # 儲存已辨識的字母序列
+                index_finger_tip = hand_landmarks.landmark[8]
+                middle_finger_tip = hand_landmarks.landmark[12]
+                x_index, y_index = int(index_finger_tip.x * image.shape[1]), int(index_finger_tip.y * image.shape[0])
+                x_middle, y_middle = int(middle_finger_tip.x * image.shape[1]), int(middle_finger_tip.y * image.shape[0])
 
-# 設置清除按鈕
-button_width = 100
-button_height = 50
-button_margin = 20 # 按鈕之間的間距
-clear_button_rect = (20, 480 - 60, button_width, button_height) # 調整按鈕位置
-undo_button_rect = (20 + button_width + button_margin, 480 - 60, button_width, button_height)
+                x_index = np.clip(x_index, 10, image.shape[1] - 10)
+                y_index = np.clip(y_index, 10, image.shape[0] - 10)
 
-buttons = {
-    "清除": {"rect": clear_button_rect, "action": "clear"},
-    "撤銷": {"rect": undo_button_rect, "action": "undo"}
-}
-
-# 追蹤鼠標點擊事件 (用於按鈕)
-mouse_clicked = False
-def mouse_callback(event, x, y, flags, param):
-    global mouse_clicked
-    if event == cv2.EVENT_LBUTTONDOWN:
-        mouse_clicked = True
-    elif event == cv2.EVENT_LBUTTONUP:
-        mouse_clicked = False
-
-cv2.namedWindow('Hand Tracking')
-cv2.setMouseCallback('Hand Tracking', mouse_callback)
-
-while cap.isOpened():
-    success, image = cap.read()
-    if not success:
-        continue
-
-    image = cv2.flip(image, 1) # 水平翻轉
-    image_height, image_width, _ = image.shape
-
-    if canvas is None:
-        canvas = np.zeros((image_height, image_width, 3), dtype=np.uint8)
-        drawing_layer = np.zeros((image_height, image_width, 3), dtype=np.uint8)
-        bounding_boxes_layer = np.zeros((image_height, image_width, 3), dtype=np.uint8) # 新增邊界框圖層
-
-    # 將圖像轉換為 RGB
-    image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-    results = hands.process(image_rgb)
-
-    # 重置繪圖層和邊界框層
-    drawing_layer.fill(0)
-    bounding_boxes_layer.fill(0)
-
-    # 繪製手部追蹤網格
-    # draw_hand_tracking_grid(image, grid_counts, image_width, image_height) # 如果需要，取消註釋
-
-    current_hand_landmarks = None
-    if results.multi_hand_landmarks:
-        for hand_landmarks in results.multi_hand_landmarks:
-            current_hand_landmarks = hand_landmarks
-            mp.solutions.drawing_utils.draw_landmarks(
-                image, hand_landmarks, mp_hands.HAND_CONNECTIONS,
-                mp.solutions.drawing_utils.DrawingSpec(color=COLOR_BLUE, thickness=2, circle_radius=4), # 藍色點
-                mp.solutions.drawing_utils.DrawingSpec(color=COLOR_WHITE, thickness=2, circle_radius=2)) # 白色線
-
-            # 獲取食指尖端座標
-            index_finger_tip = hand_landmarks.landmark[mp_hands.HandLandmark.INDEX_FINGER_TIP]
-            tip_x = int(index_finger_tip.x * image_width)
-            tip_y = int(index_finger_tip.y * image_height)
-
-            # 獲取中指尖端座標
-            middle_finger_tip = hand_landmarks.landmark[mp_hands.HandLandmark.MIDDLE_FINGER_TIP]
-            middle_x = int(middle_finger_tip.x * image_width)
-            middle_y = int(middle_finger_tip.y * image_height)
-
-            # 計算食指尖和中指尖之間的距離
-            distance = np.linalg.norm(np.array([tip_x, tip_y]) - np.array([middle_x, middle_y]))
-
-            # 偵測握拳狀態 (用於橡皮擦) - 所有手指尖和掌根距離較近
-            is_fist = False
-            if hand_landmarks.landmark[mp_hands.HandLandmark.WRIST] and \
-               hand_landmarks.landmark[mp_hands.HandLandmark.THUMB_TIP] and \
-               hand_landmarks.landmark[mp_hands.HandLandmark.INDEX_FINGER_TIP] and \
-               hand_landmarks.landmark[mp_hands.HandLandmark.MIDDLE_FINGER_TIP] and \
-               hand_landmarks.landmark[mp_hands.HandLandmark.RING_FINGER_TIP] and \
-               hand_landmarks.landmark[mp_hands.HandLandmark.PINKY_TIP]:
+                current_points.append((x_index, y_index))
                 
-                wrist = np.array([hand_landmarks.landmark[mp_hands.HandLandmark.WRIST].x,
-                                  hand_landmarks.landmark[mp_hands.HandLandmark.WRIST].y])
-                thumb_tip = np.array([hand_landmarks.landmark[mp_hands.HandLandmark.THUMB_TIP].x,
-                                      hand_landmarks.landmark[mp_hands.HandLandmark.THUMB_TIP].y])
-                index_tip_norm = np.array([hand_landmarks.landmark[mp_hands.HandLandmark.INDEX_FINGER_TIP].x,
-                                           hand_landmarks.landmark[mp_hands.HandLandmark.INDEX_FINGER_TIP].y])
-                middle_tip_norm = np.array([hand_landmarks.landmark[mp_hands.HandLandmark.MIDDLE_FINGER_TIP].x,
-                                            hand_landmarks.landmark[mp_hands.HandLandmark.MIDDLE_FINGER_TIP].y])
-                ring_tip_norm = np.array([hand_landmarks.landmark[mp_hands.HandLandmark.RING_FINGER_TIP].x,
-                                          hand_landmarks.landmark[mp_hands.HandLandmark.RING_FINGER_TIP].y])
-                pinky_tip_norm = np.array([hand_landmarks.landmark[mp_hands.HandLandmark.PINKY_TIP].x,
-                                           hand_landmarks.landmark[mp_hands.HandLandmark.PINKY_TIP].y])
-                
-                # 簡單判斷：所有手指尖到掌根的垂直距離是否都較小
-                # 這是一個簡化的判斷，可能需要更精確的模型或規則
-                if (index_tip_norm[1] > wrist[1] and middle_tip_norm[1] > wrist[1] and
-                    ring_tip_norm[1] > wrist[1] and pinky_tip_norm[1] > wrist[1]):
-                    is_fist = True
+                # 检查是否按下了开始绘图按钮
+                if not is_drawing_enabled and (button_area_draw[0] <= x_index <= button_area_draw[2] and
+                                               button_area_draw[1] <= y_index <= button_area_draw[3]):
+                    is_drawing_enabled = True
 
-            # 橡皮擦功能
-            if is_fist:
-                # 橡皮擦中心點可以是手掌中心或某個指關節
-                eraser_center_x = int(hand_landmarks.landmark[mp_hands.HandLandmark.WRIST].x * image_width)
-                eraser_center_y = int(hand_landmarks.landmark[mp_hands.HandLandmark.WRIST].y * image_height)
-                eraser_radius = 30 # 橡皮擦半徑
-                
-                # 繪製橡皮擦指示
-                cv2.circle(image, (eraser_center_x, eraser_center_y), eraser_radius, COLOR_RED, 2)
-                cv2.putText(image, "Eraser", (eraser_center_x + 30, eraser_center_y - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, COLOR_RED, 1)
+                # 检查手指是否进入"Clear"按钮的区域
+                if (button_area_clear[0] <= x_index <= button_area_clear[2] and
+                    button_area_clear[1] <= y_index <= button_area_clear[3]):
+                    clear_canvas = True
 
-                # 清除畫布上的區域
-                # 創建一個白色圓形蒙版
-                mask = np.zeros_like(canvas)
-                cv2.circle(mask, (eraser_center_x, eraser_center_y), eraser_radius, (255, 255, 255), -1)
-                
-                # 使用蒙版來清除 canvas 和 paths 中的筆劃
-                # 先清除畫布上的像素
-                canvas = cv2.bitwise_and(canvas, cv2.bitwise_not(mask))
-
-                # 從 paths 中移除被擦除的點
-                new_paths = []
-                for path in paths:
-                    new_path = []
-                    for point in path:
-                        if np.linalg.norm(np.array(point) - np.array([eraser_center_x, eraser_center_y])) > eraser_radius:
-                            new_path.append(point)
-                    if new_path:
-                        new_paths.append(new_path)
-                paths = new_paths
-                
-                # 重置 current_points
-                current_points = []
-            else:
-                # 判斷是否在繪圖
-                if distance > 40: # 食指和中指分開，進行繪圖
-                    if is_hand_in_recognition_area(hand_landmarks, recognition_area):
-                        current_points.append((tip_x, tip_y))
-                    # 重置之前的預測，因為正在書寫
-                    predictions = []
-                else: # 食指和中指靠近，停止繪圖
-                    if current_points:
-                        paths.append(list(current_points)) # 將當前筆劃添加到 paths
-                        current_points = [] # 清空當前筆劃
-
-    # 繪製已完成的筆劃
-    for path in paths:
-        for i in range(1, len(path)):
-            cv2.line(canvas, path[i-1], path[i], DRAWING_COLOR, 5) # 使用繪圖顏色
-
-    # 繪製當前筆劃 (如果正在繪圖)
-    if current_points:
-        for i in range(1, len(current_points)):
-            cv2.line(drawing_layer, current_points[i-1], current_points[i], DRAWING_COLOR, 5)
-
-    # 繪製偵測區域
-    x_min, y_min, x_max, y_max = recognition_area
-    cv2.rectangle(image, (x_min, y_min), (x_max, y_max), COLOR_YELLOW, 2) # 黃色框
-    cv2.putText(image, "Recognition Area", (x_min + 10, y_min - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, COLOR_YELLOW, 2)
-
-    # 當手部不在畫面中或不在識別區域時，觸發辨識
-    if not results.multi_hand_landmarks or not is_hand_in_recognition_area(current_hand_landmarks, recognition_area):
-        if paths and not predictions: # 避免重複預測
-            # 將所有筆劃合併到一個臨時圖像上進行辨識
-            temp_drawing_for_prediction = np.zeros_like(canvas)
-            for path in paths:
-                for i in range(1, len(path)):
-                    cv2.line(temp_drawing_for_prediction, path[i-1], path[i], (255, 255, 255), 5) # 用白色筆劃
-            
-            predictions = detect_shapes_and_predict(temp_drawing_for_prediction, letter_model, class_names)
-            # print("Predicted:", predictions) # 偵錯用
-
-    # 繪製邊界框和預測結果
-    bounding_boxes_layer = draw_bounding_box(bounding_boxes_layer, predictions)
-
-
-    # 繪製控制面板
-    image = draw_control_panel(image, current_hand_landmarks, buttons)
-
-    # 處理按鈕點擊
-    if mouse_clicked:
-        for btn_name, btn_info in buttons.items():
-            x, y, w, h = btn_info['rect']
-            # 檢查鼠標點擊是否在按鈕範圍內
-            if x < mouse_x < x + w and y < mouse_y < y + h:
-                if btn_info['action'] == "clear":
-                    paths = []
-                    current_points = []
-                    canvas.fill(0)
-                    drawing_layer.fill(0)
-                    predictions = [] # 清除所有預測
-                    recognized_letters = []
-                    print("畫布已清除")
-                elif btn_info['action'] == "undo":
+                # 检查是否触发撤销功能
+                if (undo_area[0] <= x_index <= undo_area[2] and
+                    undo_area[1] <= y_index <= undo_area[3] and
+                    undo_cooldown == 0):
                     if paths:
-                        paths.pop() # 移除最後一個筆劃
-                        canvas.fill(0) # 清空畫布
-                        for path in paths: # 重新繪製所有剩餘的筆劃
+                        paths.pop()
+                        drawing_layer = np.zeros_like(canvas)
+                        for path in paths:
                             for i in range(1, len(path)):
-                                cv2.line(canvas, path[i-1], path[i], DRAWING_COLOR, 5)
-                        predictions = [] # 重新觸發預測
-                        recognized_letters = []
-                        print("撤銷操作")
-                mouse_clicked = False # 重置點擊狀態以避免連續觸發
+                                cv2.line(drawing_layer, path[i - 1], path[i], (240, 202, 166), line_thickness)
+                        undo_cooldown = 30  # 设置冷却时间，防止连续触发
 
-    # 當前點上繪製十字準星
-    if current_points:
-        x, y = current_points[-1]
-        crosshair_size = 15
-        crosshair_thickness = 2
-        cv2.circle(image, (x, y), 5, ACCENT_COLOR, -1)
-        cv2.line(image, (x - crosshair_size, y), (x + crosshair_size, y), ACCENT_COLOR, crosshair_thickness)
-        cv2.line(image, (x, y - crosshair_size), (x, y + crosshair_size), ACCENT_COLOR, crosshair_thickness)
+                # 计算食指和中指之间的距离
+                distance = np.sqrt((x_index - x_middle) ** 2 + (y_index - y_middle) ** 2)
+                if distance < 30:  # 距离阈值可以调整
+                    drawing = False
+                    points = []  # 清除当前绘制点，停止绘图
+                else:
+                    drawing = True
 
-    # 合并图像：即時攝像頭畫面、繪圖層和邊界框層
-    # 將繪圖層和邊界框層疊加到畫布上，然後再疊加到攝像頭畫面
-    overlay_drawing = cv2.addWeighted(canvas, 1, drawing_layer, 1, 0)
-    overlay_bounding = cv2.addWeighted(overlay_drawing, 1, bounding_boxes_layer, 1, 0)
-    
-    # 疊加到主圖像上
-    # 因為 overlay_bounding 和 image 都是 BGR，可以直接疊加
-    combined_image = cv2.addWeighted(image, 1, overlay_bounding, 0.8, 0) # 疊加透明度調整
+                # 检查是否拳头模式（所有手指折叠）
+                fist_state = True
+                for id in [mp_hands.HandLandmark.THUMB_TIP, mp_hands.HandLandmark.INDEX_FINGER_TIP,
+                           mp_hands.HandLandmark.MIDDLE_FINGER_TIP, mp_hands.HandLandmark.RING_FINGER_TIP,
+                           mp_hands.HandLandmark.PINKY_TIP]:
+                    fingertip = hand_landmarks.landmark[id]
+                    palm = hand_landmarks.landmark[mp_hands.HandLandmark.WRIST]
+                    if np.linalg.norm(np.array([fingertip.x, fingertip.y]) - np.array([palm.x, palm.y])) > 0.1:
+                        fist_state = False
+                        break
 
-    # 更新並添加字母窗口
-    letter_window = update_letter_window(predictions, combined_image.shape[1])
-    final_image = np.vstack((combined_image, letter_window))
+                # 如果检测到拳头，进入橡皮擦模式
+                if fist_state:
+                    mid_x, mid_y = (x_index + x_middle) // 2, (y_index + y_middle) // 2
+                    cv2.circle(image, (mid_x, mid_y), erase_radius, erase_color, 2)
+                    cv2.circle(drawing_layer, (mid_x, mid_y), erase_radius, (0, 0, 0), -1)
+                    new_predictions = []
+                    for pred in predictions:
+                        box, _ = pred
+                        x, y, w, h = box
+                        if not ((x <= mid_x <= x+w) and (y <= mid_y <= y+h)):
+                            new_predictions.append(pred)
+                    predictions = new_predictions
+                    if erase_start_time is None:
+                        erase_start_time = time.time()
+                    is_erasing = True
 
-    # 顯示最終圖像
-    cv2.imshow('Hand Tracking', final_image)
+            # 手不在识别区时进行画布识别
+            if not is_hand_in_recognition_area(current_points):
+                # 侦测形状并根据模式预测数字或符号
+                predictions = detect_shapes_and_predict(drawing_layer, letter_model)
+                for _, prediction in predictions:
+                    recognized_letters.append(class_names[prediction])
+                bounding_boxes_layer = np.zeros_like(canvas)  # 清除之前的边界框层
+                for (box, prediction) in predictions:
+                    x, y, w, h = box
+                    cv2.rectangle(bounding_boxes_layer, (x, y), (x + w, y + h), (0, 100, 255), 2)
+                    prediction_text = str(prediction)
+                    cv2.putText(bounding_boxes_layer, prediction_text, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
 
-    # 獲取鼠標位置（用於按鈕懸停效果）
-    mouse_x, mouse_y = 0, 0
-    if cv2.getWindowProperty('Hand Tracking', cv2.WND_PROP_AUTOSIZE) >= 0: # 確保視窗存在
-        mouse_x, mouse_y = cv2.getMouseProperty('Hand Tracking', cv2.EVENT_MOUSEMOVE)[0:2] # 獲取X,Y座標
+        else:
+            if hand_in_frame:
+                # 手部不在画面中
+                hand_in_frame = False
+                # 清除画布
+                if clear_canvas:
+                    canvas = np.full((canvas_height, canvas_width, 3), canvas_color, dtype=np.uint8)
+                    drawing_layer = np.zeros_like(canvas)
+                    bounding_boxes_layer = np.zeros_like(canvas)
+                    draw_grid(canvas, num_rows=4, num_cols=2)
+                    clear_canvas = False
 
-    key = cv2.waitKey(1) & 0xFF
+        if drawing and len(current_points) > 0 and not is_erasing and is_drawing_enabled:
+            points.extend(current_points)
+            if len(points) > 1 and not is_erasing:
+                path = []
+                for i in range(1, len(points)):
+                    path.append(points[i - 1])
+                    cv2.line(drawing_layer, points[i - 1], points[i], (240, 202, 166), line_thickness)
+                    cv2.line(image, points[i - 1], points[i], (240, 202, 166), line_thickness)
+                paths.append(path)
+                points = [points[-1]]
 
-    # 檢查視窗是否被關閉 (X 按鈕)
-    if cv2.getWindowProperty('Hand Tracking', cv2.WND_PROP_VISIBLE) < 1:
-        break
+        if is_erasing:
+            erase_mask = np.zeros_like(drawing_layer)
+            cv2.circle(erase_mask, (mid_x, mid_y), erase_radius, (255, 255, 255), -1)
+            drawing_layer = cv2.bitwise_and(drawing_layer, cv2.bitwise_not(erase_mask))
+            new_paths = []
+            for path in paths:
+                new_path = [point for point in path if erase_mask[point[1], point[0]].sum() == 0]
+                if new_path:
+                    new_paths.append(new_path)
+            paths = new_paths
+            points = []
+            is_erasing = False
 
-    if key == 27:  # 按 ESC 鍵
-        break
+        if len(paths) == 0:
+            bounding_boxes_layer = np.zeros_like(canvas)  # 如果没有笔划，隐藏边界框
 
-cap.release()
-cv2.destroyAllWindows()
+        # 合并图像：首先是画布，然后是绘图层，最后是边界框
+        combined_image = np.hstack((image, canvas + drawing_layer + bounding_boxes_layer))
+        gray_layer = cv2.cvtColor(drawing_layer, cv2.COLOR_BGR2GRAY)
+        resized_layer = cv2.resize(gray_layer, (64, 64))
+        normalized_layer = resized_layer / 255.0
+        reshaped_layer = normalized_layer.reshape(1, 64, 64, 1)
+        
+        # 更新网格计数和识别的数字
+        if len(current_points) > 0:
+            x, y = current_points[-1]
+            grid_index = get_grid_position(x, y, canvas_width, canvas_height)
+
+            grid_counts[grid_index] += 1
+
+            if len(points) > 1:
+                recognized_digits[grid_index].append(prediction[0])
+                draw_bounding_box(bounding_boxes_layer, points, color=(0, 255, 0), thickness=2)
+
+            cv2.circle(image, (x, y), 5, (255, 255, 255), -1)
+
+        draw_grid_info(combined_image, grid_counts, canvas_width, canvas_height)
+        if len(current_points) > 0:
+            x, y = current_points[-1]
+            cv2.circle(image, (x, y), 5, crosshair_color, -1)
+            cv2.line(image, (x - crosshair_size, y), (x + crosshair_size, y), crosshair_color, crosshair_thickness)
+            cv2.line(image, (x, y - crosshair_size), (x, y + crosshair_size), crosshair_color, crosshair_thickness)
+        
+        # 合并图像：画布、绘图层和边界框
+        combined_image = np.hstack((image, canvas + drawing_layer + bounding_boxes_layer))
+
+        # 更新并添加字母窗口
+        letter_window = update_letter_window(predictions, combined_image.shape[1])  # 使用合并图像的宽度
+        letter_window_with_padding = np.zeros((letter_window.shape[0], combined_image.shape[1], 3), dtype=np.uint8)
+        letter_window_with_padding[:, :letter_window.shape[1]] = letter_window
+        final_image = np.vstack((combined_image, letter_window_with_padding))
+
+        for i, letter in enumerate(recognized_letters):
+            cv2.putText(image, letter, (10, 50 + i * 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+        
+        letter_window = update_letter_window(predictions, image.shape[1])  # 使用原始图像的宽度
+        combined_image = np.vstack((image, letter_window))
+
+        cv2.imshow('Hand Tracking', final_image)
+
+        key = cv2.waitKey(1) & 0xFF
+        if key == 27:  # ESC键
+            break
+        
+        # 更新撤销冷却时间
+        if undo_cooldown > 0:
+            undo_cooldown -= 1
+
+    cap.release()
+    cv2.destroyAllWindows()
+
+if __name__ == "__main__":
+    hand_tracking()
