@@ -104,3 +104,49 @@ class CanvasManager:
         """回傳畫布上有效筆跡的像素數量，用來過濾噪點"""
         gray = cv2.cvtColor(self.drawing_layer, cv2.COLOR_BGR2GRAY)
         return cv2.countNonZero(gray)
+
+    def detect_circle_in_last_path(self, min_points=25,
+                                   circularity_threshold=0.72,
+                                   closure_ratio=0.28):
+        """
+        判斷最後一筆畫是否形成圓形。
+        - min_points        : 路徑最少要有幾個採樣點
+        - circularity_threshold : 各點到圓心距離的 (1 - std/mean)，越接近 1 越圓
+        - closure_ratio     : 起點終點距離 / 總路徑長度 的最大允許比例
+        回傳 (cx, cy, radius) 或 None
+        """
+        if not self.paths:
+            return None
+
+        path = self.paths[-1]
+        if len(path) < min_points:
+            return None
+
+        pts = np.array(path, dtype=np.float32)
+
+        # 1. 閉合度：起點與終點必須夠接近
+        start, end = pts[0], pts[-1]
+        dist_close = float(np.linalg.norm(end - start))
+        # 計算總路徑長度
+        diffs = np.diff(pts, axis=0)
+        path_len = float(np.linalg.norm(diffs, axis=1).sum())
+        if path_len < 40:          # 太短的線不算圓
+            return None
+        if dist_close > path_len * closure_ratio:
+            return None
+
+        # 2. 圓度：各點到重心距離的 std/mean 要小
+        cx, cy = pts.mean(axis=0)
+        dists   = np.linalg.norm(pts - np.array([cx, cy]), axis=1)
+        mean_r  = float(dists.mean())
+        std_r   = float(dists.std())
+
+        if mean_r < 18:            # 半徑太小不算
+            return None
+
+        circularity = 1.0 - (std_r / mean_r)
+        if circularity < circularity_threshold:
+            return None
+
+        return int(cx), int(cy), int(mean_r)
+

@@ -134,3 +134,140 @@ class MagicMandala:
         cv2.circle(frame, (cx, cy), 9, color, 1, cv2.LINE_AA)
         
         self.update()
+
+
+class NeuralBloom:
+    """
+    意念視覺化：畫圓後從圓心爆出的神經突觸樹狀網路。
+    完全原創的非線性動畫效果。
+    """
+
+    TOTAL_DURATION = 4.0   # 整個效果持續秒數
+    FADE_OUT_TIME  = 0.9   # 最後淡出秒數
+
+    def __init__(self):
+        self.active   = False
+        self._branches = []
+        self._t0       = 0.0
+        self._color    = (50, 200, 255)
+
+    # ── 觸發 ──────────────────────────────────────────────────────
+
+    def trigger(self, cx, cy, radius, color=(50, 200, 255)):
+        """在 (cx, cy) 觸發神經網路爆發，radius 決定主幹長度"""
+        self._color    = color
+        self._t0       = time.time()
+        self._branches = []
+        self.active    = True
+
+        rng = random.Random(int(self._t0 * 1000) % 99991)
+
+        # 主幹（從圓心向外放射）
+        n_main = rng.randint(7, 11)
+        for i in range(n_main):
+            base_angle = (2 * math.pi / n_main) * i + rng.uniform(-0.18, 0.18)
+            main_len   = radius * rng.uniform(0.85, 1.55)
+            # 每條主幹錯開一點點開始時間，有層疊爆發感
+            t_start    = i * 0.038
+            self._gen_branch(cx, cy, base_angle, main_len, depth=0,
+                             t_start=t_start, rng=rng)
+
+    def _gen_branch(self, x1, y1, angle, length, depth, t_start, rng, max_depth=4):
+        """遞歸生成所有分支（預先計算，動畫時只做插值）"""
+        if depth > max_depth or length < 11:
+            return
+
+        x2 = x1 + math.cos(angle) * length
+        y2 = y1 + math.sin(angle) * length
+
+        # 深度越深生長越快（更靠近末梢反應更快）
+        grow_dur = max(0.055, 0.20 - depth * 0.025)
+
+        self._branches.append({
+            'x1': x1, 'y1': y1,
+            'x2': x2, 'y2': y2,
+            'depth': depth,
+            't_start': t_start,
+            'grow_dur': grow_dur,
+        })
+
+        # 子分支數量：越深越少
+        n_children = rng.randint(2, 3) if depth < 2 else rng.randint(1, 2)
+        child_t = t_start + grow_dur + rng.uniform(0.0, 0.025)
+        for _ in range(n_children):
+            spread   = rng.uniform(0.35, 1.05)
+            side     = 1 if rng.random() > 0.45 else -1
+            c_angle  = angle + side * spread
+            c_length = length * rng.uniform(0.42, 0.65)
+            self._gen_branch(x2, y2, c_angle, c_length,
+                             depth + 1, child_t, rng, max_depth)
+
+    # ── 更新與繪製 ─────────────────────────────────────────────────
+
+    def update_and_draw(self, frame):
+        if not self.active:
+            return
+
+        elapsed = time.time() - self._t0
+        if elapsed >= self.TOTAL_DURATION:
+            self.active = False
+            return
+
+        # 全域透明度（淡入 0.08s，保持，淡出 FADE_OUT_TIME）
+        if elapsed < 0.08:
+            global_alpha = elapsed / 0.08
+        elif elapsed > self.TOTAL_DURATION - self.FADE_OUT_TIME:
+            global_alpha = (self.TOTAL_DURATION - elapsed) / self.FADE_OUT_TIME
+        else:
+            global_alpha = 1.0
+        global_alpha = max(0.0, min(1.0, global_alpha))
+
+        bc, bg, br = self._color  # BGR
+
+        for b in self._branches:
+            t = elapsed - b['t_start']
+            if t <= 0:
+                continue
+
+            progress = min(1.0, t / b['grow_dur'])
+            depth    = b['depth']
+
+            x1, y1 = int(b['x1']), int(b['y1'])
+            # 根據 progress 插值當前末端
+            ex = int(b['x1'] + (b['x2'] - b['x1']) * progress)
+            ey = int(b['y1'] + (b['y2'] - b['y1']) * progress)
+
+            # 越深越暗 + 全域 alpha
+            depth_factor = max(0.25, 1.0 - depth * 0.18) * global_alpha
+            col = (
+                int(bc * depth_factor),
+                int(bg * depth_factor),
+                int(br * depth_factor),
+            )
+            glow = (
+                int(bc * depth_factor * 0.3),
+                int(bg * depth_factor * 0.3),
+                int(br * depth_factor * 0.3),
+            )
+
+            thick = max(1, 3 - depth)
+
+            # 外發光（粗線）
+            if thick >= 2:
+                cv2.line(frame, (x1, y1), (ex, ey), glow, thick + 5, cv2.LINE_AA)
+
+            # 主線
+            cv2.line(frame, (x1, y1), (ex, ey), col, thick, cv2.LINE_AA)
+
+            # 末端節點（完全生長後才亮起）
+            if progress >= 1.0:
+                nr = max(2, 5 - depth)
+                # 光暈
+                cv2.circle(frame, (ex, ey), nr + 4, glow, -1, cv2.LINE_AA)
+                # 主色節點
+                cv2.circle(frame, (ex, ey), nr, col, -1, cv2.LINE_AA)
+                # 高亮白芯（只在淺層節點）
+                if depth <= 1:
+                    white = tuple(int(255 * global_alpha) for _ in range(3))
+                    cv2.circle(frame, (ex, ey), max(1, nr - 1), white, -1, cv2.LINE_AA)
+

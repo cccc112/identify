@@ -18,7 +18,7 @@ import random
 from core.hand_tracker import HandTracker
 from core.canvas import CanvasManager
 from core.model_manager import ModelManager
-from core.magic_effects import ParticleSystem, MagicMandala
+from core.magic_effects import ParticleSystem, MagicMandala, NeuralBloom
 from core.gesture_solver import GestureStateMachine, get_palm_center, safe_math_eval
 
 
@@ -197,7 +197,8 @@ def main():
     mode_idx    = 0
     palette_idx = 0
 
-    gesture_sm      = GestureStateMachine()  # 帶防抖的手勢狀態機
+    gesture_sm   = GestureStateMachine()
+    neural_bloom = NeuralBloom()          # 神經突觸爆發效果
     recognized_text = ""
     ar_answer       = None   # (str, expire_time)
     last_draw_time  = time.time()
@@ -286,8 +287,24 @@ def main():
             else:
                 # ── hover / 確認中 ────────────────────────
                 rock_triggered = False
+
+                # 每次從畫圖切換回 hover，結束筆畫並偵測圓形
+                was_drawing = canvas.points  # 如果還有未提交的點
                 canvas.notify_tracking_lost()
                 prev_draw_pt = None
+
+                # 偵測最後一筆是否為圓形 → 觸發 Neural Bloom
+                if not neural_bloom.active:
+                    circle = canvas.detect_circle_in_last_path()
+                    if circle:
+                        bcx, bcy, brad = circle
+                        neural_bloom.trigger(bcx, bcy, brad, color=ink_bgr)
+                        # 清掉那筆圓形，不要進入辨識流程
+                        canvas.paths.pop()
+                        cv2.rectangle(canvas.drawing_layer,
+                                      (bcx - brad - 20, bcy - brad - 20),
+                                      (bcx + brad + 20, bcy + brad + 20),
+                                      (0, 0, 0), -1)
 
                 # 如果正在「充能」進入畫圖模式，顯示橘色弧形進度
                 pending_draw = (gesture_sm._candidate == 'draw' and gesture_sm.state != 'draw')
@@ -316,6 +333,7 @@ def main():
 
         # ── 粒子更新 ──────────────────────────────────────
         particles.update_and_draw(disp)
+        neural_bloom.update_and_draw(disp)
 
         # ── Hover 進度計算 ────────────────────────────────
         hover_progress = 0.0
