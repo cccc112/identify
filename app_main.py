@@ -1,7 +1,20 @@
+"""
+Doctor Strange AR 手寫板 — 穩定版
+修復：
+  - EMA 濾波消除手抖
+  - 容錯緩衝 (4幀) 防止追蹤短暫遺失導致筆畫斷裂
+  - 最小像素門檻 (MIN_PIXELS) 過濾誤判噪點
+  - 信心值門檻 (55%) 過濾低品質辨識
+  - 更細的筆觸 (thickness=7)
+  - 重新設計的毛玻璃 UI
+"""
+
 import cv2
 import numpy as np
 import time
 import math
+import random
+
 from core.hand_tracker import HandTracker
 from core.canvas import CanvasManager
 from core.model_manager import ModelManager
@@ -9,163 +22,193 @@ from core.magic_effects import ParticleSystem, MagicMandala
 from core.gesture_solver import detect_gesture, get_palm_center, safe_math_eval
 
 
-# ──────────────────────────────
-#  Glassmorphism UI 輔助函式
-# ──────────────────────────────
+# ─────────────────────────────────────────────────────────────────
+#  常數設定
+# ─────────────────────────────────────────────────────────────────
+W, H = 640, 480
+MODES        = ["digit", "letter", "symbol"]
+PALETTES     = [
+    ("Gold",   (50, 200, 255)),   # 橙金
+    ("Cyan",   (255, 220,  80)),  # 冰藍
+    ("Violet", (255,  80, 220)),  # 紫魔
+    ("Red",    (60,  60,  255)),  # 赤紅
+]
+DRAW_DIST_THRESHOLD = 40   # 食指與中指距離 > 此值 → 畫圖
+MIN_PIXELS          = 300  # 畫布上至少要有這麼多白色像素才觸發辨識
+SEG_TIMEOUT         = 1.5  # 停筆超過此秒數才觸發自動辨識
 
-def create_glass_overlay(image, rect, corner_radius=15, alpha=0.45, 
-                         color=(30, 30, 30), border_color=(130, 130, 130)):
+
+# ─────────────────────────────────────────────────────────────────
+#  UI 工具函式
+# ─────────────────────────────────────────────────────────────────
+
+def glass_rect(img, rect, alpha=0.50, bg=(25, 25, 35), radius=12, border=(100, 100, 130)):
+    """半透明圓角毛玻璃矩形"""
     x1, y1, x2, y2 = rect
+    x1, y1 = max(0, x1), max(0, y1)
+    x2, y2 = min(img.shape[1], x2), min(img.shape[0], y2)
     if x2 <= x1 or y2 <= y1:
         return
-    
-    roi = image[y1:y2, x1:x2].copy()
-    h, w = roi.shape[:2]
-    
-    # 圓角 Mask
+
+    sub  = img[y1:y2, x1:x2].copy()
+    h, w = sub.shape[:2]
+    r    = min(radius, h // 2, w // 2)
+
     mask = np.zeros((h, w), dtype=np.uint8)
-    r = min(corner_radius, h // 2, w // 2)
     cv2.rectangle(mask, (r, 0), (w - r, h), 255, -1)
     cv2.rectangle(mask, (0, r), (w, h - r), 255, -1)
-    cv2.circle(mask, (r, r), r, 255, -1)
-    cv2.circle(mask, (w - r, r), r, 255, -1)
-    cv2.circle(mask, (r, h - r), r, 255, -1)
-    cv2.circle(mask, (w - r, h - r), r, 255, -1)
-    
-    # 毛玻璃模糊 + 著色
-    blurred = cv2.GaussianBlur(roi, (21, 21), 0)
-    colored = cv2.addWeighted(blurred, 1.0 - alpha, np.full_like(blurred, color[::-1] if len(color) == 3 else color), alpha, 0)
-    
-    np.copyto(roi, colored, where=(mask == 255)[:, :, None])
-    
-    # 邊框（只在 mask 邊緣）
-    edge = cv2.Canny(mask, 100, 200)
-    edge = cv2.dilate(edge, np.ones((2, 2), np.uint8), iterations=1)
-    roi[edge > 0] = border_color
-    
-    image[y1:y2, x1:x2] = roi
+    for cx, cy in [(r, r), (w-r, r), (r, h-r), (w-r, h-r)]:
+        cv2.circle(mask, (cx, cy), r, 255, -1)
+
+    blurred = cv2.GaussianBlur(sub, (15, 15), 0)
+    color_layer = np.full_like(sub, bg[::-1] if len(bg) == 3 else bg)
+    blended = cv2.addWeighted(blurred, 1 - alpha, color_layer, alpha, 0)
+
+    np.copyto(sub, blended, where=(mask == 255)[:, :, None])
+
+    # 邊框
+    edge_mask = cv2.Canny(mask, 100, 200)
+    edge_mask = cv2.dilate(edge_mask, np.ones((2, 2), np.uint8))
+    sub[edge_mask > 0] = border
+
+    img[y1:y2, x1:x2] = sub
 
 
-def is_in_rect(pt, rect):
+def label(img, text, x, y, scale=0.55, color=(220, 220, 220), thick=1):
+    cv2.putText(img, text, (x, y), cv2.FONT_HERSHEY_DUPLEX,
+                scale, color, thick, cv2.LINE_AA)
+
+
+def hover_arc(img, cx, cy, r, progress, color=(60, 255, 120)):
+    if progress <= 0:
+        return
+    cv2.ellipse(img, (cx, cy), (r, r), -90, 0,
+                int(360 * progress), color, 3, cv2.LINE_AA)
+
+
+def is_in(pt, rect):
     return rect[0] <= pt[0] <= rect[2] and rect[1] <= pt[1] <= rect[3]
 
 
-def draw_progress_arc(image, center, radius, progress, color=(0, 255, 0)):
-    """在按鈕旁繪製圓弧進度指示（更有魔法感）"""
-    if progress <= 0:
-        return
-    angle = int(360 * progress)
-    cv2.ellipse(image, center, (radius, radius), -90, 0, angle, color, 3, cv2.LINE_AA)
-
-
-# ──────────────────────────────
+# ─────────────────────────────────────────────────────────────────
 #  主 UI 繪製
-# ──────────────────────────────
+# ─────────────────────────────────────────────────────────────────
 
-PALETTE_COLORS = [
-    ('Draw',  (255, 200,  50)),  # 橙金（預設）
-    ('Ice',   ( 80, 220, 255)),  # 冰藍
-    ('Magic', (200,  80, 255)),  # 紫魔
-    ('Blood', ( 50,  50, 255)),  # 赤紅
-]
+def draw_ui(img, mode, palette_idx, gesture_name,
+            text, hover_pt, last_btn, hover_prog, ar_ans=None):
+    """
+    繪製整個 AR UI。
+    回傳: hovered_btn_name | None
+    """
+    # ── 頂部按鈕列 ──────────────────────────────────────
+    BTN_H = 50
+    PAD   = 12
 
-def draw_ar_ui(image, mode, color_idx, recognized_text,
-               hover_point=None, last_hovered_btn=None, hover_progress=0.0):
-    W, H = image.shape[1], image.shape[0]
+    btn_mode  = (PAD,        PAD, 175,           PAD + BTN_H)
+    btn_ink   = (185,        PAD, 310,           PAD + BTN_H)
+    btn_back  = (W - 215,   PAD, W - 110,       PAD + BTN_H)
+    btn_clear = (W - 100,   PAD, W - PAD,       PAD + BTN_H)
 
-    btn_mode     = (15,  15, 170, 65)
-    btn_color    = (180, 15, 270, 65)
-    btn_back     = (W - 230, 15, W - 120, 65)
-    btn_clear    = (W - 110, 15, W -  15, 65)
+    for rect, bg in [(btn_mode,  (40, 25, 70)),
+                     (btn_ink,   (20, 55, 40)),
+                     (btn_back,  (65, 35, 25)),
+                     (btn_clear, (70, 15, 15))]:
+        glass_rect(img, rect, bg=bg)
 
-    # --- 毛玻璃按鈕 ---
-    create_glass_overlay(image, btn_mode,  color=(40, 30, 60))
-    create_glass_overlay(image, btn_color, color=(20, 50, 40))
-    create_glass_overlay(image, btn_back,  color=(60, 40, 30))
-    create_glass_overlay(image, btn_clear, color=(70, 20, 20))
+    ink_name = PALETTES[palette_idx][0]
+    label(img, f"Mode: {mode.upper()}", btn_mode[0]+10,  btn_mode[1]+32,  color=(160, 255, 180))
+    label(img, f"Ink: {ink_name}",      btn_ink[0]+10,   btn_ink[1]+32,   color=(160, 255, 220))
+    label(img, "< Undo",               btn_back[0]+14,  btn_back[1]+32,  color=(190, 190, 255))
+    label(img, "Clear",                btn_clear[0]+16, btn_clear[1]+32, color=(200, 140, 255))
 
-    label_color, _ = PALETTE_COLORS[color_idx]
-    cv2.putText(image, f"Mode: {mode.upper()}", (btn_mode[0]+10, btn_mode[1]+34),
-                cv2.FONT_HERSHEY_DUPLEX, 0.52, (200, 255, 200), 1, cv2.LINE_AA)
-    cv2.putText(image, f"Ink: {label_color}", (btn_color[0]+10, btn_color[1]+34),
-                cv2.FONT_HERSHEY_DUPLEX, 0.52, (220, 255, 180), 1, cv2.LINE_AA)
-    cv2.putText(image, "< Back", (btn_back[0]+15, btn_back[1]+34),
-                cv2.FONT_HERSHEY_DUPLEX, 0.62, (200, 200, 255), 1, cv2.LINE_AA)
-    cv2.putText(image, "Clear", (btn_clear[0]+20, btn_clear[1]+34),
-                cv2.FONT_HERSHEY_DUPLEX, 0.62, (150, 150, 255), 1, cv2.LINE_AA)
+    # ── 手勢狀態提示 (左下角) ────────────────────────────
+    gesture_colors = {
+        'draw':      (60,  255, 100),
+        'hover':     (200, 200,  60),
+        'palm_open': (60,  160, 255),
+        'rock':      (60,   60, 255),
+    }
+    gc = gesture_colors.get(gesture_name, (160, 160, 160))
+    gesture_icons = {
+        'draw': '✏ DRAW', 'hover': '🖱 HOVER',
+        'palm_open': '✋ MAGIC', 'rock': '🤘 CAST',
+    }
+    gi = gesture_icons.get(gesture_name, '· ·  ·')
+    glass_rect(img, (PAD, H - 110, 170, H - PAD - 90), alpha=0.4, bg=(20, 20, 20))
+    label(img, gi, PAD + 10, H - 110 + 32, scale=0.52, color=gc)
 
-    # --- 底部輸出框 ---
-    bar = (15, H - 90, W - 15, H - 15)
-    create_glass_overlay(image, bar, alpha=0.35, color=(10, 10, 10))
-    display = f"Output: {recognized_text[-60:]}"  # 最多顯示 60 個字元
-    cv2.putText(image, display, (bar[0]+20, bar[1]+52),
-                cv2.FONT_HERSHEY_DUPLEX, 0.95, (60, 255, 100), 2, cv2.LINE_AA)
+    # ── 底部輸出文字框 ───────────────────────────────────
+    bar = (PAD, H - 85, W - PAD, H - PAD)
+    glass_rect(img, bar, alpha=0.42, bg=(10, 10, 15))
+    display = recognized_text_display(text)
+    label(img, display, bar[0] + 16, bar[1] + 52,
+          scale=1.0, color=(60, 255, 100), thick=2)
 
-    # --- Hover 高亮 + 進度弧 ---
-    hovered_btn = None
-    if hover_point:
-        for btn, name in [(btn_mode, 'mode'), (btn_color, 'color'),
-                          (btn_back, 'back'), (btn_clear, 'clear')]:
-            if is_in_rect(hover_point, btn):
-                hovered_btn = name
-                if name == last_hovered_btn:
-                    cv2.rectangle(image, btn[:2], btn[2:], (255, 255, 255), 2, cv2.LINE_AA)
-                    cx = (btn[0] + btn[2]) // 2
-                    cy = btn[3] + 18
-                    draw_progress_arc(image, (cx, cy), 12, hover_progress)
+    # ── AR 數學解答 ──────────────────────────────────────
+    if ar_ans:
+        ans_text = f"= {ar_ans}"
+        glass_rect(img, (160, 185, 480, 265), alpha=0.55, bg=(10, 40, 10))
+        # 外發光
+        for off, col in [(3, (0, 80, 0)), (1, (0, 200, 50))]:
+            cv2.putText(img, ans_text, (170 + off, 244),
+                        cv2.FONT_HERSHEY_DUPLEX, 1.35, col, 3 + off, cv2.LINE_AA)
+        cv2.putText(img, ans_text, (170, 244),
+                    cv2.FONT_HERSHEY_DUPLEX, 1.35, (80, 255, 120), 2, cv2.LINE_AA)
+
+    # ── Hover 高亮與進度弧 ───────────────────────────────
+    hovered = None
+    if hover_pt:
+        for rect, name in [(btn_mode, 'mode'), (btn_ink, 'ink'),
+                           (btn_back, 'back'), (btn_clear, 'clear')]:
+            if is_in(hover_pt, rect):
+                hovered = name
+                if name == last_btn and hover_prog > 0:
+                    cv2.rectangle(img, rect[:2], rect[2:], (255, 255, 255), 2, cv2.LINE_AA)
+                    cx = (rect[0] + rect[2]) // 2
+                    hover_arc(img, cx, rect[3] + 16, 11, hover_prog)
                 break
 
-    return hovered_btn
+    return hovered
 
 
-def draw_ar_answer(image, answer_str, anchor_x, anchor_y):
-    """在算式旁邊顯示浮空的 AR 解答，帶有光暈效果"""
-    text = f"= {answer_str}"
-    # 發光底層
-    for offset, col in [(4, (0, 80, 0)), (2, (0, 180, 30))]:
-        cv2.putText(image, text, (anchor_x + offset, anchor_y),
-                    cv2.FONT_HERSHEY_DUPLEX, 1.4, col, 3 + offset, cv2.LINE_AA)
-    # 亮字
-    cv2.putText(image, text, (anchor_x, anchor_y),
-                cv2.FONT_HERSHEY_DUPLEX, 1.4, (100, 255, 120), 2, cv2.LINE_AA)
+def recognized_text_display(text, max_chars=55):
+    """只顯示最近 max_chars 個字元，避免 overflow"""
+    return ("Output: " + text)[-max_chars:]
 
 
-# ──────────────────────────────
+# ─────────────────────────────────────────────────────────────────
 #  主程式
-# ──────────────────────────────
+# ─────────────────────────────────────────────────────────────────
 
 def main():
-    print("[系統] 正在啟動空中魔法系統 (Doctor Strange Edition)...")
+    print("[系統] Doctor Strange AR — 穩定版啟動中...")
 
     cap = cv2.VideoCapture(0)
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH,  W)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, H)
     cap.set(cv2.CAP_PROP_FPS, 30)
 
     tracker   = HandTracker()
-    canvas    = CanvasManager(width=640, height=480, line_thickness=12)
+    canvas    = CanvasManager(width=W, height=H, line_thickness=7)
     model_mgr = ModelManager()
     particles = ParticleSystem()
     mandala   = MagicMandala()
 
-    MODES = ["digit", "letter", "symbol"]
-    mode_idx   = 0
-    color_idx  = 0
+    mode_idx    = 0
+    palette_idx = 0
 
     recognized_text = ""
-    ar_answer   = None          # (answer_str, expire_time)
-    last_draw_time = time.time()
+    ar_answer       = None   # (str, expire_time)
+    last_draw_time  = time.time()
 
-    btn_cooldown      = 0.0
-    last_hovered_btn  = None
-    hover_start_time  = 0.0
+    btn_cooldown     = 0.0
+    last_hovered_btn = None
+    hover_start_time = 0.0
 
-    # 搖滾手勢連擊偵測
-    rock_gesture_time  = 0.0
-    rock_triggered     = False
-
-    prev_draw_pt = None
-    prev_time    = time.time()
+    rock_triggered = False
+    prev_draw_pt   = None
+    prev_time      = time.time()
+    gesture_name   = 'unknown'
 
     while cap.isOpened():
         ok, frame = cap.read()
@@ -174,108 +217,112 @@ def main():
 
         frame = cv2.flip(frame, 1)
         results, disp = tracker.process_frame(frame, optimize_lighting=False)
-        # 不顯示骨架，保持畫面乾淨（選擇性）
-        # disp = tracker.draw_landmarks(disp, results)
 
-        curr_time  = time.time()
-        mode_name  = MODES[mode_idx]
-        ink_color  = PALETTE_COLORS[color_idx][1]  # BGR
+        curr_time   = time.time()
+        mode_name   = MODES[mode_idx]
+        ink_bgr     = PALETTES[palette_idx][1]    # (B, G, R)
 
-        is_drawing    = False
-        hover_point   = None
-        gesture       = 'unknown'
+        is_drawing  = False
+        hover_point = None
 
+        # ── 手部追蹤 ─────────────────────────────────────
         if results.hand_landmarks:
             lm = results.hand_landmarks[0]
 
-            # 食指 & 中指座標
-            x_idx = int(np.clip(lm[8].x * 640, 5, 635))
-            y_idx = int(np.clip(lm[8].y * 480, 5, 475))
-            x_mid = int(lm[12].x * 640)
-            y_mid = int(lm[12].y * 480)
-            hover_point = (x_idx, y_idx)
+            x_idx = int(np.clip(lm[8].x * W, 5, W - 5))
+            y_idx = int(np.clip(lm[8].y * H, 5, H - 5))
+            x_mid = int(lm[12].x * W)
+            y_mid = int(lm[12].y * H)
+            hover_point  = (x_idx, y_idx)
+            gesture_name = detect_gesture(lm, W, H)
 
-            gesture = detect_gesture(lm, 640, 480)
+            dist_fingers = math.sqrt((x_idx - x_mid) ** 2 + (y_idx - y_mid) ** 2)
 
-            # ── 手勢分支 ──────────────────────────────────────
+            # ── 手勢分支 ──────────────────────────────────
 
-            if gesture == 'palm_open':
-                # 掌心法陣
-                palm_cx, palm_cy = get_palm_center(lm, 640, 480)
-                # 根據手掌深度 (z) 調整法陣大小
-                avg_z = sum(lm[i].z for i in [0, 5, 9, 13, 17]) / 5
-                radius = int(np.clip(80 - avg_z * 400, 50, 130))
-                mandala.draw(disp, palm_cx, palm_cy, radius=radius, color=ink_color)
-                # 指尖噴射粒子
+            if gesture_name == 'palm_open':
+                palm_cx, palm_cy = get_palm_center(lm, W, H)
+                avg_z  = sum(lm[i].z for i in [0, 5, 9, 13, 17]) / 5
+                radius = int(np.clip(85 - avg_z * 380, 50, 130))
+                mandala.draw(disp, palm_cx, palm_cy, radius=radius, color=ink_bgr)
                 for tip_id in [4, 8, 12, 16, 20]:
-                    tx = int(lm[tip_id].x * 640)
-                    ty = int(lm[tip_id].y * 480)
-                    particles.spawn(tx, ty, color=ink_color, count=2)
-                canvas.end_stroke()
-
-            elif gesture == 'rock':
-                # 搖滾手勢 → 炸裂清空 (觸發一次)
-                if not rock_triggered and curr_time - rock_gesture_time < 0.1:
-                    pass
-                elif not rock_triggered:
-                    rock_gesture_time = curr_time
-                    rock_triggered = True
-                    # 爆炸粒子噴射
-                    for _ in range(60):
-                        import random
-                        particles.spawn(
-                            random.randint(100, 540),
-                            random.randint(80, 400),
-                            color=ink_color, count=1
-                        )
-                    canvas.clear()
-                    recognized_text = ""
-                canvas.end_stroke()
-
-            elif gesture == 'draw':
+                    tx = int(lm[tip_id].x * W)
+                    ty = int(lm[tip_id].y * H)
+                    particles.spawn(tx, ty, color=ink_bgr, count=2)
+                canvas.notify_tracking_lost()  # 張手時不應畫圖
                 rock_triggered = False
-                is_drawing = True
-                canvas.add_point((x_idx, y_idx))
+
+            elif gesture_name == 'rock' and not rock_triggered:
+                rock_triggered = True
+                for _ in range(80):
+                    particles.spawn(
+                        random.randint(80, 560), random.randint(60, 420),
+                        color=ink_bgr, count=1)
+                canvas.clear()
+                recognized_text = ""
+                canvas.notify_tracking_lost()
+
+            elif dist_fingers > DRAW_DIST_THRESHOLD:
+                # 畫圖模式
+                is_drawing     = True
+                rock_triggered = False
+                canvas.add_point(x_idx, y_idx)
                 last_draw_time = curr_time
-                # 指尖粒子（少量，避免性能下降）
+
                 if prev_draw_pt:
-                    dist = math.sqrt((x_idx - prev_draw_pt[0])**2 + (y_idx - prev_draw_pt[1])**2)
-                    if dist > 12:
-                        particles.spawn(x_idx, y_idx, color=ink_color, count=3)
+                    d = math.sqrt((x_idx - prev_draw_pt[0]) ** 2 + (y_idx - prev_draw_pt[1]) ** 2)
+                    if d > 10:
+                        particles.spawn(x_idx, y_idx, color=ink_bgr, count=2)
                 prev_draw_pt = (x_idx, y_idx)
-                # 畫筆準心
-                cv2.circle(disp, (x_idx, y_idx), 10, ink_color, -1, cv2.LINE_AA)
+
+                # 準心：實心圓 + 白色外環
+                cv2.circle(disp, (x_idx, y_idx), 9,  ink_bgr,       -1, cv2.LINE_AA)
                 cv2.circle(disp, (x_idx, y_idx), 14, (255, 255, 255), 1, cv2.LINE_AA)
 
-            else:  # hover / unknown
+            else:
+                # 懸浮模式
                 rock_triggered = False
-                canvas.end_stroke()
+                canvas.notify_tracking_lost()
                 prev_draw_pt = None
-                # 懸浮準心
-                cv2.circle(disp, (x_idx, y_idx), 8, (200, 200, 200), -1, cv2.LINE_AA)
-                cv2.circle(disp, (x_idx, y_idx), 18, (255, 255, 255), 2, cv2.LINE_AA)
+                # 準心：空心雙環
+                cv2.circle(disp, (x_idx, y_idx), 7,  (180, 180, 180), -1, cv2.LINE_AA)
+                cv2.circle(disp, (x_idx, y_idx), 16, (255, 255, 255),  1, cv2.LINE_AA)
+                cv2.circle(disp, (x_idx, y_idx), 20, (200, 200, 200),  1, cv2.LINE_AA)
 
         else:
-            canvas.end_stroke()
-            prev_draw_pt  = None
+            # 完全沒偵測到手
+            canvas.notify_tracking_lost()
+            prev_draw_pt   = None
             last_hovered_btn = None
             rock_triggered = False
+            gesture_name   = 'unknown'
 
-        # ── 粒子更新 ──────────────────────────────────────────
+        # ── 粒子更新 ──────────────────────────────────────
         particles.update_and_draw(disp)
 
-        # ── Hover 按鈕計算 ───────────────────────────────────
+        # ── Hover 進度計算 ────────────────────────────────
         hover_progress = 0.0
         if last_hovered_btn and not is_drawing:
             hover_progress = min(1.0, (curr_time - hover_start_time) / 1.0)
 
-        btns = draw_ar_ui(disp, mode_name, color_idx, recognized_text,
-                          hover_point, last_hovered_btn, hover_progress)
-        hovered_btn = btns
+        # ── 繪製 UI ───────────────────────────────────────
+        ar_ans_display = None
+        if ar_answer and curr_time < ar_answer[1]:
+            ar_ans_display = ar_answer[0]
+        elif ar_answer and curr_time >= ar_answer[1]:
+            ar_answer = None
 
+        hovered_btn = draw_ui(
+            disp, mode_name, palette_idx, gesture_name,
+            recognized_text, hover_point, last_hovered_btn,
+            hover_progress, ar_ans=ar_ans_display
+        )
+
+        # ── Hover 按鈕觸發 ────────────────────────────────
         if hovered_btn and not is_drawing:
             if hovered_btn == last_hovered_btn:
-                if curr_time - hover_start_time > 1.0 and curr_time - btn_cooldown > 0.8:
+                if (curr_time - hover_start_time > 1.0 and
+                        curr_time - btn_cooldown > 0.8):
                     if hovered_btn == 'clear':
                         recognized_text = ""
                         canvas.clear()
@@ -284,62 +331,65 @@ def main():
                     elif hovered_btn == 'mode':
                         mode_idx = (mode_idx + 1) % len(MODES)
                         canvas.clear()
-                    elif hovered_btn == 'color':
-                        color_idx = (color_idx + 1) % len(PALETTE_COLORS)
-                    btn_cooldown = curr_time
+                    elif hovered_btn == 'ink':
+                        palette_idx = (palette_idx + 1) % len(PALETTES)
+                    btn_cooldown     = curr_time
                     hover_start_time = curr_time
             else:
                 last_hovered_btn = hovered_btn
-                hover_start_time  = curr_time
+                hover_start_time = curr_time
         else:
             last_hovered_btn = None
 
-        # ── 自動辨識 (Auto-Segmentation 1.2s) ────────────────
-        if not is_drawing and canvas.has_content() and (curr_time - last_draw_time > 1.2):
-            preds = model_mgr.predict_canvas_content(canvas.drawing_layer, mode=mode_name)
-            new_chars = "".join(str(label) for _, label in preds)
-            recognized_text += new_chars
+        # ── 自動分字辨識 ──────────────────────────────────
+        pixel_count = canvas.get_pixel_count()
+        time_elapsed = curr_time - last_draw_time
 
-            # ── AR 數學解題器 ───────────────────────────────
-            # 如果最後一個字元是 '=' 或輸入尾端已包含 '='，嘗試求解
-            if '=' in recognized_text:
-                # 取最後一段等號之前的算式
-                expr = recognized_text.rsplit('=', 1)[0]
-                answer, ok = safe_math_eval(expr)
-                if ok:
-                    ar_answer = (answer, curr_time + 4.0)  # 顯示 4 秒
+        if (not is_drawing
+                and canvas.has_content()
+                and pixel_count >= MIN_PIXELS
+                and time_elapsed > SEG_TIMEOUT):
+
+            preds = model_mgr.predict_canvas_content(
+                canvas.drawing_layer, mode=mode_name)
+
+            new_chars = ""
+            for box, char, conf in preds:
+                new_chars += char
+
+            if new_chars:
+                recognized_text += new_chars
+
+                # AR 數學解題
+                if '=' in recognized_text:
+                    expr = recognized_text.rsplit('=', 1)[0]
+                    ans, ok = safe_math_eval(expr)
+                    if ok:
+                        ar_answer = (ans, curr_time + 4.0)
 
             canvas.clear()
 
-        # ── AR 解答浮空顯示 ──────────────────────────────────
-        if ar_answer:
-            ans_str, expire = ar_answer
-            if curr_time < expire:
-                draw_ar_answer(disp, ans_str, 80, 240)
-            else:
-                ar_answer = None
+        # ── 筆跡 AR 疊加 (著色) ───────────────────────────
+        draw_lyr = canvas.drawing_layer
+        white_mask = cv2.inRange(draw_lyr, (200, 200, 200), (255, 255, 255))
+        colored_lyr = np.zeros_like(draw_lyr)
+        colored_lyr[white_mask > 0] = ink_bgr
+        disp[white_mask > 0] = colored_lyr[white_mask > 0]
 
-        # ── 筆跡 AR 疊加 ─────────────────────────────────────
-        draw_layer = canvas.drawing_layer
-        # 用色彩替換：把白色筆跡染成 ink_color
-        white_mask = cv2.inRange(draw_layer, (200, 200, 200), (255, 255, 255))
-        colored_layer = np.zeros_like(draw_layer)
-        colored_layer[white_mask > 0] = ink_color
-        
-        mask_bool = white_mask > 0
-        disp[mask_bool] = colored_layer[mask_bool]
-        canvas.draw_current_stroke(disp)
+        # 即時筆跡（當幀尚未 commit 的點）
+        canvas.draw_current_stroke(disp, ink_color=ink_bgr)
 
-        # ── FPS ──────────────────────────────────────────────
-        now = time.time()
-        fps = 1.0 / max(now - prev_time, 0.001)
+        # ── 輕量骨架（可選：不顯示以保持畫面清爽）─────────
+        # disp = tracker.draw_landmarks(disp, results)
+
+        # ── FPS 顯示 ──────────────────────────────────────
+        now  = time.time()
+        fps  = 1.0 / max(now - prev_time, 0.001)
         prev_time = now
-        cv2.putText(disp, f"FPS {int(fps)}", (15, 110),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2, cv2.LINE_AA)
+        label(disp, f"FPS {int(fps)}", 16, 120, scale=0.55, color=(0, 220, 220))
 
         cv2.imshow('Doctor Strange AR', disp)
-        key = cv2.waitKey(1) & 0xFF
-        if key == 27:  # ESC 離開
+        if cv2.waitKey(1) & 0xFF == 27:
             break
 
     cap.release()

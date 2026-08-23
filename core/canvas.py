@@ -1,51 +1,106 @@
 import cv2
 import numpy as np
+import math
+
 
 class CanvasManager:
-    def __init__(self, width=640, height=480, line_thickness=12):
+    def __init__(self, width=640, height=480, line_thickness=7):
         self.width = width
         self.height = height
         self.line_thickness = line_thickness
-        
-        # 只保留最純粹的繪圖層，背景必須為純黑，以便於 CNN 辨識
-        self.drawing_layer = np.zeros((height, width, 3), dtype=np.uint8)
-        self.points = []
-        self.paths = []
-        
-    def clear(self):
-        """清空畫布與所有軌跡"""
-        self.drawing_layer = np.zeros((self.height, self.width, 3), dtype=np.uint8)
-        self.points = []
-        self.paths = []
 
-    def add_point(self, pt):
-        """加入新座標"""
-        self.points.append(pt)
+        # 白色筆跡 (黑底)，方便 CNN 辨識
+        self.drawing_layer = np.zeros((height, width, 3), dtype=np.uint8)
+        self.points   = []   # 目前正在進行中的筆畫點
+        self.paths    = []   # 已完成的所有筆畫
+
+        # EMA 濾波器：平滑手部抖動
+        self._ema_x = None
+        self._ema_y = None
+        self._ema_alpha = 0.40  # 越小越滑順但越有延遲，0.4 是體感最佳平衡
+
+        # 容錯 buffer：短暫漏偵測時不要切斷筆畫
+        self._miss_frames  = 0
+        self._max_miss     = 4   # 最多容忍連續 4 幀遺失
+
+        # 最小採樣間距：避免同一位置重複採樣造成密集噪點
+        self._min_dist = 5
+
+    # ── 公開 API ──────────────────────────────────────────────
+
+    def smooth_point(self, raw_x, raw_y):
+        """EMA 低通濾波，消除手部抖動"""
+        if self._ema_x is None:
+            self._ema_x, self._ema_y = float(raw_x), float(raw_y)
+        else:
+            a = self._ema_alpha
+            self._ema_x = a * raw_x + (1 - a) * self._ema_x
+            self._ema_y = a * raw_y + (1 - a) * self._ema_y
+        return int(self._ema_x), int(self._ema_y)
+
+    def add_point(self, raw_x, raw_y):
+        """加入新座標（自動套用 EMA 濾波與最小間距過濾）"""
+        self._miss_frames = 0
+        sx, sy = self.smooth_point(raw_x, raw_y)
+
+        # 如果與上一個點太近，跳過（避免鋸齒密點）
+        if self.points:
+            lx, ly = self.points[-1]
+            if math.sqrt((sx - lx) ** 2 + (sy - ly) ** 2) < self._min_dist:
+                return
+
+        self.points.append((sx, sy))
+
+    def notify_tracking_lost(self):
+        """通知系統這一幀追蹤失敗；容錯 N 幀後才真正結束筆畫"""
+        self._miss_frames += 1
+        if self._miss_frames >= self._max_miss:
+            self.end_stroke()
 
     def end_stroke(self):
-        """結束目前筆畫"""
+        """強制結束目前筆畫，寫入 drawing_layer"""
+        self._miss_frames = 0
+        self._ema_x = self._ema_y = None  # 重置濾波器
+
         if len(self.points) > 1:
             for i in range(1, len(self.points)):
-                cv2.line(self.drawing_layer, self.points[i - 1], self.points[i], (255, 255, 255), self.line_thickness, cv2.LINE_AA)
-                cv2.circle(self.drawing_layer, self.points[i], self.line_thickness // 2, (255, 255, 255), -1, cv2.LINE_AA)
+                cv2.line(self.drawing_layer,
+                         self.points[i - 1], self.points[i],
+                         (255, 255, 255), self.line_thickness, cv2.LINE_AA)
+                cv2.circle(self.drawing_layer, self.points[i],
+                           self.line_thickness // 2, (255, 255, 255), -1, cv2.LINE_AA)
             self.paths.append(self.points.copy())
         elif len(self.points) == 1:
-            # 畫一個點 (處理用戶只點了一下)
-            cv2.circle(self.drawing_layer, self.points[0], self.line_thickness // 2, (255, 255, 255), -1, cv2.LINE_AA)
+            cv2.circle(self.drawing_layer, self.points[0],
+                       self.line_thickness // 2 + 1, (255, 255, 255), -1, cv2.LINE_AA)
             self.paths.append(self.points.copy())
+
         self.points = []
 
-    def draw_current_stroke(self, image):
-        """在原畫面上即時繪製正在畫的線條 (讓使用者能看到筆跡 AR 疊加)"""
-        if len(self.points) > 1:
-            for i in range(1, len(self.points)):
-                # 繪製不同顏色的即時筆跡，這裡選擇亮青色，開啟抗鋸齒
-                cv2.line(image, self.points[i - 1], self.points[i], (255, 200, 0), self.line_thickness, cv2.LINE_AA)
-                cv2.circle(image, self.points[i], self.line_thickness // 2, (255, 200, 0), -1, cv2.LINE_AA)
-        elif len(self.points) == 1:
-            cv2.circle(image, self.points[0], self.line_thickness // 2, (255, 200, 0), -1, cv2.LINE_AA)
+    def clear(self):
+        self.drawing_layer = np.zeros((self.height, self.width, 3), dtype=np.uint8)
+        self.points = []
+        self.paths  = []
+        self._ema_x = self._ema_y = None
+        self._miss_frames = 0
+
+    def draw_current_stroke(self, image, ink_color=(255, 200, 50)):
+        """即時把正在畫的筆跡疊加到 display frame（用 ink_color 著色）"""
+        pts = self.points
+        if len(pts) > 1:
+            for i in range(1, len(pts)):
+                cv2.line(image, pts[i - 1], pts[i],
+                         ink_color, self.line_thickness, cv2.LINE_AA)
+                cv2.circle(image, pts[i],
+                           self.line_thickness // 2, ink_color, -1, cv2.LINE_AA)
+        elif len(pts) == 1:
+            cv2.circle(image, pts[0],
+                       self.line_thickness // 2, ink_color, -1, cv2.LINE_AA)
 
     def has_content(self):
-        """檢查畫布上是否有筆跡"""
-        # 如果有存下來的路徑，或者是正在畫圖的狀態，都算有內容
-        return len(self.paths) > 0 or len(self.points) > 0
+        return len(self.paths) > 0
+
+    def get_pixel_count(self):
+        """回傳畫布上有效筆跡的像素數量，用來過濾噪點"""
+        gray = cv2.cvtColor(self.drawing_layer, cv2.COLOR_BGR2GRAY)
+        return cv2.countNonZero(gray)

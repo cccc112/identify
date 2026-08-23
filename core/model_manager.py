@@ -124,30 +124,41 @@ class ModelManager:
         # 由左至右排序
         merged_boxes.sort(key=lambda b: b[0])
                 
+        MIN_CONFIDENCE = 0.55  # 低於此門檻的預測一律丟棄，避免噪點誤判
+
         predictions = []
         for box in merged_boxes:
             x, y, w, h = box
-            pad = 20 # 稍微增加邊距，幫助 CNN 辨識邊緣特徵
+            # 過濾太小的框（可能是筆觸毛邊或噪點）
+            if w * h < 200:
+                continue
+
+            pad = 20
             x1 = max(0, x - pad)
             y1 = max(0, y - pad)
             x2 = min(gray.shape[1], x + w + pad)
             y2 = min(gray.shape[0], y + h + pad)
-            
+
             roi = gray[y1:y2, x1:x2]
             if roi.size == 0:
                 continue
-                
+
             input_tensor = self.preprocess_roi(roi, mode)
-            pred_probs = model.predict(input_tensor, verbose=0)
-            pred_label = np.argmax(pred_probs)
-            
+            pred_probs = model.predict(input_tensor, verbose=0)[0]
+            pred_label = int(np.argmax(pred_probs))
+            confidence = float(pred_probs[pred_label])
+
+            # 信心值過濾
+            if confidence < MIN_CONFIDENCE:
+                continue
+
             if mode == "letter" and pred_label < len(self.letter_classes):
                 pred_char = self.letter_classes[pred_label]
             elif mode == "symbol" and pred_label < len(self.symbol_classes):
                 pred_char = f" {self.symbol_classes[pred_label]} "
             else:
                 pred_char = str(pred_label)
-                
-            predictions.append(((x, y, w, h), pred_char))
-            
+
+            predictions.append(((x, y, w, h), pred_char, confidence))
+
         return predictions
