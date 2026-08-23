@@ -2,6 +2,163 @@ import math
 import numpy as np
 
 
+# ─────────────────────────────────────────────────────────────────
+#  安全數學求值
+# ─────────────────────────────────────────────────────────────────
+
+_ALLOWED_NAMES = {k: v for k, v in math.__dict__.items() if not k.startswith('_')}
+_ALLOWED_NAMES.update({'abs': abs, 'round': round})
+
+def safe_math_eval(expr: str):
+    subs = {
+        'sqrt': 'sqrt', 'pi': 'pi', 'sin': 'sin', 'cos': 'cos',
+        'tan': 'tan', 'log': 'log', 'exp': 'exp',
+        'times': '*', '×': '*', '÷': '/',
+        'pm': '+', 'neq': '!=', 'leq': '<=', 'geq': '>=',
+        'infty': 'inf',
+    }
+    cleaned = expr.strip().rstrip('=').strip()
+    for k, v in subs.items():
+        cleaned = cleaned.replace(k, v)
+
+    import re
+    if not re.match(r'^[0-9+\-*/^().a-zA-Z_ ]+$', cleaned):
+        return None, False
+    cleaned = cleaned.replace('^', '**')
+
+    try:
+        result = eval(cleaned, {"__builtins__": {}}, _ALLOWED_NAMES)
+        if isinstance(result, float) and result == int(result):
+            return str(int(result)), True
+        return f"{result:.4g}", True
+    except Exception:
+        return None, False
+
+
+# ─────────────────────────────────────────────────────────────────
+#  原始手勢偵測（per-frame，只是分類，不做狀態管理）
+# ─────────────────────────────────────────────────────────────────
+
+def _raw_gesture(lm, frame_w, frame_h):
+    """
+    回傳當前幀的原始手勢字串。
+    不做任何防抖/遲滯，僅分類。
+    """
+    def up(tip, pip, is_thumb=False):
+        t, p = lm[tip], lm[pip]
+        if is_thumb:
+            return abs(t.x - lm[0].x) > abs(p.x - lm[0].x)
+        return t.y < p.y
+
+    idx_up  = up(8,  6)
+    mid_up  = up(12, 10)
+    rng_up  = up(16, 14)
+    pnk_up  = up(20, 18)
+    thm_up  = up(4,  3, is_thumb=True)
+
+    # 食指和中指指尖距離
+    x_idx = lm[8].x * frame_w
+    y_idx = lm[8].y * frame_h
+    x_mid = lm[12].x * frame_w
+    y_mid = lm[12].y * frame_h
+    dist  = math.sqrt((x_idx - x_mid) ** 2 + (y_idx - y_mid) ** 2)
+
+    all_up = idx_up and mid_up and rng_up and pnk_up
+
+    # 五指全開 → 魔法陣
+    if all_up and thm_up:
+        return 'palm_open'
+
+    # 搖滾手勢 (食指 + 小指，中指/無名指收)
+    if idx_up and pnk_up and not mid_up and not rng_up:
+        return 'rock'
+
+    # 食指伸出且兩指距離夠大 → 畫圖意圖
+    if idx_up and dist > 40:
+        return 'draw_intent'
+
+    # 其餘 → 懸浮
+    return 'hover'
+
+
+# ─────────────────────────────────────────────────────────────────
+#  手勢狀態機（解決誤觸和轉場抖動）
+# ─────────────────────────────────────────────────────────────────
+
+class GestureStateMachine:
+    """
+    非對稱遲滯狀態機：
+      - HOVER → DRAW  需要連續 ENTER_FRAMES 幀確認（預設 8 幀 ≈ 267ms）
+      - DRAW  → HOVER 只需連續 EXIT_FRAMES  幀確認（預設 3 幀 ≈ 100ms，可以快速抬手）
+      - PALM / ROCK 因為是特殊手勢，仍然需要 4 幀確認
+    這樣可以避免「從拳頭展開食指時」的中間過渡狀態誤觸發畫圖。
+    """
+
+    # 進入各狀態所需的連續確認幀數
+    ENTER_FRAMES = {
+        'draw':      8,   # 必須確實穩定展開食指才開始畫
+        'hover':     3,   # 抬手停止很快
+        'palm_open': 4,
+        'rock':      3,
+    }
+
+    # 原始手勢 → 狀態名稱的映射
+    RAW_TO_STATE = {
+        'draw_intent': 'draw',
+        'hover':       'hover',
+        'palm_open':   'palm_open',
+        'rock':        'rock',
+    }
+
+    def __init__(self):
+        self.state          = 'hover'   # 目前確認的狀態
+        self._candidate     = 'hover'   # 正在計數的候選狀態
+        self._count         = 0         # 候選狀態已持續幀數
+        self._confirm_need  = self.ENTER_FRAMES['hover']
+
+    def update(self, lm, frame_w, frame_h):
+        """
+        輸入當前幀的 hand_landmarks，更新狀態機。
+        回傳目前「確認的」狀態字串與「候選狀態的確認進度 0~1」。
+        """
+        raw = _raw_gesture(lm, frame_w, frame_h)
+        candidate = self.RAW_TO_STATE.get(raw, 'hover')
+
+        if candidate == self._candidate:
+            self._count += 1
+        else:
+            # 候選手勢改變，重新開始計數
+            self._candidate    = candidate
+            self._count        = 1
+            self._confirm_need = self.ENTER_FRAMES.get(candidate, 8)
+
+        # 達到確認幀數，才切換正式狀態
+        if self._count >= self._confirm_need:
+            self.state = self._candidate
+
+        progress = min(1.0, self._count / self._confirm_need)
+        return self.state, progress
+
+    def reset(self):
+        """追蹤遺失時呼叫，快速退回 hover"""
+        self._candidate    = 'hover'
+        self._count        = self.ENTER_FRAMES['hover']   # 立即確認
+        self.state         = 'hover'
+        self._confirm_need = self.ENTER_FRAMES['hover']
+
+
+# ─────────────────────────────────────────────────────────────────
+#  手掌中心
+# ─────────────────────────────────────────────────────────────────
+
+def get_palm_center(lm, frame_w, frame_h):
+    ids = [0, 5, 9, 13, 17]
+    cx = int(sum(lm[i].x * frame_w for i in ids) / len(ids))
+    cy = int(sum(lm[i].y * frame_h for i in ids) / len(ids))
+    return cx, cy
+
+
+
 # 簡單的安全 eval：只允許數學相關 token
 _ALLOWED_NAMES = {k: v for k, v in math.__dict__.items() if not k.startswith('_')}
 _ALLOWED_NAMES.update({'abs': abs, 'round': round})

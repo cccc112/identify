@@ -19,7 +19,7 @@ from core.hand_tracker import HandTracker
 from core.canvas import CanvasManager
 from core.model_manager import ModelManager
 from core.magic_effects import ParticleSystem, MagicMandala
-from core.gesture_solver import detect_gesture, get_palm_center, safe_math_eval
+from core.gesture_solver import GestureStateMachine, get_palm_center, safe_math_eval
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -197,6 +197,7 @@ def main():
     mode_idx    = 0
     palette_idx = 0
 
+    gesture_sm      = GestureStateMachine()  # 帶防抖的手勢狀態機
     recognized_text = ""
     ar_answer       = None   # (str, expire_time)
     last_draw_time  = time.time()
@@ -205,10 +206,11 @@ def main():
     last_hovered_btn = None
     hover_start_time = 0.0
 
-    rock_triggered = False
-    prev_draw_pt   = None
-    prev_time      = time.time()
-    gesture_name   = 'unknown'
+    rock_triggered    = False
+    prev_draw_pt      = None
+    prev_time         = time.time()
+    gesture_name      = 'hover'
+    gesture_progress  = 0.0   # 0~1：目前手勢的確認進度（用來顯示給使用者看）
 
     while cap.isOpened():
         ok, frame = cap.read()
@@ -233,8 +235,10 @@ def main():
             y_idx = int(np.clip(lm[8].y * H, 5, H - 5))
             x_mid = int(lm[12].x * W)
             y_mid = int(lm[12].y * H)
-            hover_point  = (x_idx, y_idx)
-            gesture_name = detect_gesture(lm, W, H)
+            hover_point = (x_idx, y_idx)
+
+            # ── 防抖狀態機更新 ────────────────────────────
+            gesture_name, gesture_progress = gesture_sm.update(lm, W, H)
 
             dist_fingers = math.sqrt((x_idx - x_mid) ** 2 + (y_idx - y_mid) ** 2)
 
@@ -262,8 +266,8 @@ def main():
                 recognized_text = ""
                 canvas.notify_tracking_lost()
 
-            elif dist_fingers > DRAW_DIST_THRESHOLD:
-                # 畫圖模式
+            elif gesture_name == 'draw':
+                # ── 確認進入畫圖模式 ──────────────────────
                 is_drawing     = True
                 rock_triggered = False
                 canvas.add_point(x_idx, y_idx)
@@ -276,26 +280,39 @@ def main():
                 prev_draw_pt = (x_idx, y_idx)
 
                 # 準心：實心圓 + 白色外環
-                cv2.circle(disp, (x_idx, y_idx), 9,  ink_bgr,       -1, cv2.LINE_AA)
-                cv2.circle(disp, (x_idx, y_idx), 14, (255, 255, 255), 1, cv2.LINE_AA)
+                cv2.circle(disp, (x_idx, y_idx), 9,  ink_bgr,        -1, cv2.LINE_AA)
+                cv2.circle(disp, (x_idx, y_idx), 14, (255, 255, 255),  1, cv2.LINE_AA)
 
             else:
-                # 懸浮模式
+                # ── hover / 確認中 ────────────────────────
                 rock_triggered = False
                 canvas.notify_tracking_lost()
                 prev_draw_pt = None
-                # 準心：空心雙環
-                cv2.circle(disp, (x_idx, y_idx), 7,  (180, 180, 180), -1, cv2.LINE_AA)
-                cv2.circle(disp, (x_idx, y_idx), 16, (255, 255, 255),  1, cv2.LINE_AA)
-                cv2.circle(disp, (x_idx, y_idx), 20, (200, 200, 200),  1, cv2.LINE_AA)
+
+                # 如果正在「充能」進入畫圖模式，顯示橘色弧形進度
+                pending_draw = (gesture_sm._candidate == 'draw' and gesture_sm.state != 'draw')
+                if pending_draw and gesture_progress > 0:
+                    # 橘色充能環
+                    angle = int(360 * gesture_progress)
+                    cv2.circle(disp, (x_idx, y_idx), 7, (60, 180, 255), -1, cv2.LINE_AA)
+                    cv2.ellipse(disp, (x_idx, y_idx), (20, 20), -90, 0, angle,
+                                (60, 180, 255), 3, cv2.LINE_AA)
+                    cv2.circle(disp, (x_idx, y_idx), 24, (255, 255, 255), 1, cv2.LINE_AA)
+                else:
+                    # 一般懸浮準心：空心雙環
+                    cv2.circle(disp, (x_idx, y_idx), 7,  (180, 180, 180), -1, cv2.LINE_AA)
+                    cv2.circle(disp, (x_idx, y_idx), 16, (255, 255, 255),  1, cv2.LINE_AA)
+                    cv2.circle(disp, (x_idx, y_idx), 20, (200, 200, 200),  1, cv2.LINE_AA)
 
         else:
-            # 完全沒偵測到手
+            # 完全沒偵測到手 → 狀態機快速重置回 hover
+            gesture_sm.reset()
+            gesture_name     = 'hover'
+            gesture_progress = 0.0
             canvas.notify_tracking_lost()
-            prev_draw_pt   = None
+            prev_draw_pt     = None
             last_hovered_btn = None
-            rock_triggered = False
-            gesture_name   = 'unknown'
+            rock_triggered   = False
 
         # ── 粒子更新 ──────────────────────────────────────
         particles.update_and_draw(disp)
