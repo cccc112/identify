@@ -5,33 +5,55 @@ from core.hand_tracker import HandTracker
 from core.canvas import CanvasManager
 from core.model_manager import ModelManager
 
-def draw_control_panel(image, mode):
-    """繪製半透明控制面板 (App Navbar 風格)"""
-    panel_height = 50
-    width = image.shape[1]
-    
-    overlay = image.copy()
-    cv2.rectangle(overlay, (0, 0), (width, panel_height), (30, 30, 30), -1)
-    
-    btn_clear = (10, 5, 110, 45)
-    btn_mode = (130, 5, 270, 45)
-    
-    cv2.rectangle(overlay, btn_clear[:2], btn_clear[2:], (80, 80, 220), -1)
-    cv2.rectangle(overlay, btn_mode[:2], btn_mode[2:], (80, 220, 80), -1)
-    
-    cv2.putText(overlay, 'Clear', (25, 33), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-    cv2.putText(overlay, f"Mode: {mode.upper()}", (140, 33), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2)
-    
-    cv2.addWeighted(overlay, 0.8, image, 0.2, 0, image)
-    return btn_clear, btn_mode
-
 def is_point_in_rect(pt, rect):
     x, y = pt
     rx1, ry1, rx2, ry2 = rect
     return rx1 <= x <= rx2 and ry1 <= y <= ry2
 
+def draw_ar_ui(image, mode, recognized_text, hover_point=None):
+    """繪製 AR 使用者介面 (按鈕與文字框)"""
+    width = image.shape[1]
+    height = image.shape[0]
+    overlay = image.copy()
+    
+    # --- 繪製頂部按鈕 ---
+    btn_clear = (width - 220, 10, width - 130, 50)
+    btn_backspace = (width - 120, 10, width - 10, 50)
+    btn_mode = (10, 10, 110, 50)
+    
+    cv2.rectangle(overlay, btn_clear[:2], btn_clear[2:], (80, 80, 220), -1)
+    cv2.rectangle(overlay, btn_backspace[:2], btn_backspace[2:], (80, 150, 220), -1)
+    cv2.rectangle(overlay, btn_mode[:2], btn_mode[2:], (80, 220, 80), -1)
+    
+    cv2.putText(overlay, 'Clear', (btn_clear[0]+15, btn_clear[1]+28), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+    cv2.putText(overlay, '< Back', (btn_backspace[0]+15, btn_backspace[1]+28), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+    cv2.putText(overlay, f"{mode.upper()}", (btn_mode[0]+15, btn_mode[1]+28), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2)
+    
+    # --- 繪製底部文字輸入框 ---
+    text_bar_height = 80
+    text_bar_rect = (0, height - text_bar_height, width, height)
+    cv2.rectangle(overlay, text_bar_rect[:2], text_bar_rect[2:], (30, 30, 30), -1)
+    
+    # 顯示文字
+    display_text = f"Result: {recognized_text}"
+    cv2.putText(overlay, display_text, (20, height - 30), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 0), 3)
+    
+    # 合併半透明
+    cv2.addWeighted(overlay, 0.8, image, 0.2, 0, image)
+    
+    # 按鈕互動反饋 (如果懸停，畫出白色高亮框)
+    hovered_btn = None
+    if hover_point:
+        for btn, name in [(btn_clear, 'clear'), (btn_backspace, 'backspace'), (btn_mode, 'mode')]:
+            if is_point_in_rect(hover_point, btn):
+                cv2.rectangle(image, btn[:2], btn[2:], (255, 255, 255), 3)
+                hovered_btn = name
+                break
+                
+    return btn_clear, btn_backspace, btn_mode, hovered_btn
+
 def main():
-    print("[系統] 正在啟動空中手勢繪圖系統 (UI 升級版)...")
+    print("[系統] 正在啟動空中手勢繪圖系統 (AR 手寫板模式)...")
     
     cap = cv2.VideoCapture(0)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
@@ -42,7 +64,14 @@ def main():
     model_mgr = ModelManager()
     
     current_mode = "digit"
+    recognized_text = ""
+    
+    # 狀態變數
+    last_draw_time = time.time()
     button_cooldown = 0
+    btn_hover_start_time = 0
+    last_hovered_btn = None
+    
     prev_time = time.time()
     
     while cap.isOpened():
@@ -52,17 +81,13 @@ def main():
             
         frame = cv2.flip(frame, 1)
         
-        # 1. 關閉光線優化，避免雜訊干擾 MediaPipe
+        # 取得追蹤結果 (關閉光線優化)
         results, processed_frame = tracker.process_frame(frame, optimize_lighting=False)
         processed_frame = tracker.draw_landmarks(processed_frame, results)
-        btn_clear, btn_mode = draw_control_panel(processed_frame, current_mode)
-        
-        # 準備右側畫布與歷史面板 (640 + 250 = 890 寬度)
-        final_canvas = canvas_mgr.get_combined_canvas()
-        history_panel = np.zeros((480, 250, 3), dtype=np.uint8)
-        right_side = np.hstack((final_canvas, history_panel))
         
         is_drawing = False
+        hover_point = None
+        
         if results.hand_landmarks:
             hand_landmarks = results.hand_landmarks[0]
             
@@ -74,88 +99,84 @@ def main():
             x_mid = int(middle_tip.x * 640)
             y_mid = int(middle_tip.y * 480)
             
-            current_time = time.time()
-            if current_time - button_cooldown > 1.0:
-                if is_point_in_rect((x_idx, y_idx), btn_clear):
-                    canvas_mgr.clear()
-                    button_cooldown = current_time
-                elif is_point_in_rect((x_idx, y_idx), btn_mode):
-                    current_mode = "letter" if current_mode == "digit" else "digit"
-                    button_cooldown = current_time
+            hover_point = (x_idx, y_idx)
             
-            # 檢查是否為握拳 (橡皮擦)
-            fist_state = True
-            palm = hand_landmarks[0]
-            fingertips = [4, 8, 12, 16, 20]
-            for tip_idx in fingertips:
-                pt = hand_landmarks[tip_idx]
-                dist = np.sqrt((pt.x - palm.x)**2 + (pt.y - palm.y)**2)
-                if dist > 0.15: 
-                    fist_state = False
-                    break
-                    
-            if fist_state:
-                canvas_mgr.apply_eraser(x_idx, y_idx)
-                # 左側攝影機畫大黃圈
-                cv2.circle(processed_frame, (x_idx, y_idx), canvas_mgr.erase_radius, (0, 245, 255), 2)
-                # 右側畫布也畫大黃圈 (Virtual Pointer)
-                cv2.circle(right_side, (x_idx, y_idx), canvas_mgr.erase_radius, (0, 245, 255), 2)
+            # 手勢判定：兩指距離大於 40 -> 畫筆，否則 -> 懸浮移動
+            dist_fingers = np.sqrt((x_idx - x_mid)**2 + (y_idx - y_mid)**2)
+            
+            if dist_fingers > 40:
+                is_drawing = True
+                canvas_mgr.add_point((x_idx, y_idx))
+                last_draw_time = time.time()
+                # 畫筆準心
+                cv2.circle(processed_frame, (x_idx, y_idx), 8, (0, 255, 0), -1)
+                last_hovered_btn = None # 畫圖時不觸發按鈕
             else:
-                # 兩指距離大於 40 才判定為繪圖
-                dist_fingers = np.sqrt((x_idx - x_mid)**2 + (y_idx - y_mid)**2)
-                if dist_fingers > 40:  
-                    is_drawing = True
-                    canvas_mgr.add_point((x_idx, y_idx))
-                    
-                    # 虛擬準心：左側白十字，右側綠色準心
-                    cv2.drawMarker(processed_frame, (x_idx, y_idx), (255, 255, 255), cv2.MARKER_CROSS, 20, 2)
-                    cv2.circle(right_side, (x_idx, y_idx), 8, (0, 255, 0), -1)
-                else:
-                    canvas_mgr.end_stroke()
-                    # 兩指靠攏暫停：右側灰色準心
-                    cv2.circle(right_side, (x_idx, y_idx), 8, (150, 150, 150), -1)
-                    
-            # 預測觸發條件：剛結束一筆劃，或者提筆狀態下
-            if not is_drawing and len(canvas_mgr.paths) > 0:
-                predictions = model_mgr.predict_canvas_content(canvas_mgr.drawing_layer, mode=current_mode)
-                
-                # 每次重新繪製 Bounding Boxes
-                canvas_mgr.bounding_boxes_layer = np.zeros_like(canvas_mgr.canvas)
-                for box, label in predictions:
-                    x, y, w, h = box
-                    cv2.rectangle(canvas_mgr.bounding_boxes_layer, (x, y), (x+w, y+h), (255, 245, 0), 2)
-                    cv2.putText(canvas_mgr.bounding_boxes_layer, str(label), (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 2)
-                    
-                    # 更新歷史紀錄 (只在提筆瞬間做一次，避免重複塞入，這邊簡化處理)
-                    grid_idx = canvas_mgr.get_grid_position(x + w//2, y + h//2)
-                    # 為了避免每幀都加，只有當有剛結束的筆畫時 (此處邏輯簡化，實際上應該綁定筆畫事件)
+                canvas_mgr.end_stroke()
+                # 懸浮準心
+                cv2.circle(processed_frame, (x_idx, y_idx), 8, (150, 150, 150), -1)
+                cv2.drawMarker(processed_frame, (x_idx, y_idx), (255, 255, 255), cv2.MARKER_CROSS, 20, 2)
         else:
             canvas_mgr.end_stroke()
+            last_hovered_btn = None
             
+        # 繪製介面與取得懸停狀態
+        btns = draw_ar_ui(processed_frame, current_mode, recognized_text, hover_point)
+        hovered_btn = btns[3]
+        
+        # 處理按鈕懸停邏輯 (懸停 1 秒觸發)
+        current_time = time.time()
+        if hovered_btn and not is_drawing:
+            if hovered_btn == last_hovered_btn:
+                if current_time - btn_hover_start_time > 1.0 and current_time - button_cooldown > 1.0:
+                    if hovered_btn == 'clear':
+                        recognized_text = ""
+                        canvas_mgr.clear()
+                    elif hovered_btn == 'backspace':
+                        recognized_text = recognized_text[:-1]
+                        canvas_mgr.clear()
+                    elif hovered_btn == 'mode':
+                        current_mode = "letter" if current_mode == "digit" else "digit"
+                    button_cooldown = current_time
+                    btn_hover_start_time = current_time # 重置計時
+            else:
+                last_hovered_btn = hovered_btn
+                btn_hover_start_time = current_time
+        else:
+            last_hovered_btn = None
+            
+        # --- 自動分字邏輯 (Auto-Segmentation) ---
+        # 如果畫布上有東西，且超過 1.2 秒沒有下筆
+        if not is_drawing and canvas_mgr.has_content() and (current_time - last_draw_time > 1.2):
+            # 進行預測
+            predictions = model_mgr.predict_canvas_content(canvas_mgr.drawing_layer, mode=current_mode)
+            
+            # 將預測結果串接
+            for box, label in predictions:
+                recognized_text += str(label)
+                
+            # 預測完自動清空畫布，準備寫下一個字
+            canvas_mgr.clear()
+        
+        # 將筆跡疊加到畫面上 (AR 效果)
+        # 把黑底的 drawing_layer 疊加 (只保留非黑色的線條)
+        mask = cv2.cvtColor(canvas_mgr.drawing_layer, cv2.COLOR_BGR2GRAY)
+        _, mask = cv2.threshold(mask, 1, 255, cv2.THRESH_BINARY)
+        processed_frame[mask > 0] = canvas_mgr.drawing_layer[mask > 0]
+        
+        # 即時筆跡也要畫上去
         canvas_mgr.draw_current_stroke(processed_frame)
-        
-        # 重新取得更新後的 Bounding Box layer
-        final_canvas = canvas_mgr.get_combined_canvas()
-        right_side = np.hstack((final_canvas, history_panel))
-        
-        # 繪製歷史紀錄到右側的 panel 區域
-        canvas_mgr.draw_history_window(right_side)
-        
-        # 組合總畫面 (640 + 640 + 250 = 1530)
-        combined_image = np.hstack((processed_frame, right_side))
         
         curr_time = time.time()
         fps = 1 / (curr_time - prev_time)
         prev_time = curr_time
-        cv2.putText(combined_image, f"FPS: {int(fps)}", (10, 470), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+        cv2.putText(processed_frame, f"FPS: {int(fps)}", (10, 470), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
         
-        cv2.imshow('Hand Tracking Application', combined_image)
+        cv2.imshow('AR Handwriting Keyboard', processed_frame)
         
         key = cv2.waitKey(1) & 0xFF
         if key == 27:
             break
-        elif key == ord('z'):
-            canvas_mgr.undo_stroke()
             
     cap.release()
     cv2.destroyAllWindows()
