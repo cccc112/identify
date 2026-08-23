@@ -26,7 +26,8 @@ from core.gesture_solver import GestureStateMachine, get_palm_center, safe_math_
 #  常數設定
 # ─────────────────────────────────────────────────────────────────
 W, H = 640, 480
-MODES        = ["digit", "letter", "symbol"]
+MODES        = ["digit", "letter", "symbol", "magic"]
+MIN_BLOOM_RADIUS = 50   # 圓形半徑必須 > 此值才觸發 NeuralBloom
 PALETTES     = [
     ("Gold",   (50, 200, 255)),   # 橙金
     ("Cyan",   (255, 220,  80)),  # 冰藍
@@ -116,8 +117,11 @@ def draw_ui(img, mode, palette_idx, gesture_name,
         glass_rect(img, rect, bg=bg)
 
     ink_name = PALETTES[palette_idx][0]
-    label(img, f"Mode: {mode.upper()}", btn_mode[0]+10,  btn_mode[1]+32,  color=(160, 255, 180))
-    label(img, f"Ink: {ink_name}",      btn_ink[0]+10,   btn_ink[1]+32,   color=(160, 255, 220))
+    # Magic 模式用特別的紫色高亮提示
+    mode_color = (200, 160, 255) if mode == 'magic' else (160, 255, 180)
+    mode_label = f"✦ MAGIC" if mode == 'magic' else f"Mode: {mode.upper()}"
+    label(img, mode_label,            btn_mode[0]+10,  btn_mode[1]+32,  color=mode_color)
+    label(img, f"Ink: {ink_name}",    btn_ink[0]+10,   btn_ink[1]+32,   color=(160, 255, 220))
     label(img, "< Undo",               btn_back[0]+14,  btn_back[1]+32,  color=(190, 190, 255))
     label(img, "Clear",                btn_clear[0]+16, btn_clear[1]+32, color=(200, 140, 255))
 
@@ -293,18 +297,20 @@ def main():
                 canvas.notify_tracking_lost()
                 prev_draw_pt = None
 
-                # 偵測最後一筆是否為圓形 → 觸發 Neural Bloom
-                if not neural_bloom.active:
+                # 只有在 Magic 模式下才偵測圓形 → 觸發 Neural Bloom
+                # 同時要求半徑 > MIN_BLOOM_RADIUS，避免與手寫 O/0 衝突
+                if mode_name == 'magic' and not neural_bloom.active:
                     circle = canvas.detect_circle_in_last_path()
                     if circle:
                         bcx, bcy, brad = circle
-                        neural_bloom.trigger(bcx, bcy, brad, color=ink_bgr)
-                        # 清掉那筆圓形，不要進入辨識流程
-                        canvas.paths.pop()
-                        cv2.rectangle(canvas.drawing_layer,
-                                      (bcx - brad - 20, bcy - brad - 20),
-                                      (bcx + brad + 20, bcy + brad + 20),
-                                      (0, 0, 0), -1)
+                        if brad >= MIN_BLOOM_RADIUS:
+                            neural_bloom.trigger(bcx, bcy, brad, color=ink_bgr)
+                            # 清掉圓形筆跡，不進入辨識
+                            canvas.paths.pop()
+                            cv2.rectangle(canvas.drawing_layer,
+                                          (bcx - brad - 20, bcy - brad - 20),
+                                          (bcx + brad + 20, bcy + brad + 20),
+                                          (0, 0, 0), -1)
 
                 # 如果正在「充能」進入畫圖模式，顯示橘色弧形進度
                 pending_draw = (gesture_sm._candidate == 'draw' and gesture_sm.state != 'draw')
@@ -380,7 +386,9 @@ def main():
         pixel_count = canvas.get_pixel_count()
         time_elapsed = curr_time - last_draw_time
 
+        # Magic 模式不做辨識，只做 NeuralBloom 娛樂效果
         if (not is_drawing
+                and mode_name != 'magic'
                 and canvas.has_content()
                 and pixel_count >= MIN_PIXELS
                 and time_elapsed > SEG_TIMEOUT):
