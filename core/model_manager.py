@@ -9,12 +9,25 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 os.environ["TF_USE_LEGACY_KERAS"] = "1"
 
 class ModelManager:
-    def __init__(self, digit_model_path="C:/hand/best_model.h5", letter_model_path="C:/hand/augmented_model.h5"):
+    def __init__(self, digit_model_path="C:/hand/best_model.h5", 
+                 letter_model_path="C:/hand/augmented_model.h5",
+                 symbol_model_path="C:/hand/symbol.h5"):
         self.digit_model_path = digit_model_path
         self.letter_model_path = letter_model_path
+        self.symbol_model_path = symbol_model_path
         
         self.digit_model = None
         self.letter_model = None
+        self.symbol_model = None
+        
+        self.letter_classes = ['A', 'B', 'C','D','E','F','G','H','I','J','K','L','M',
+                               'N','O','P','Q','R','S','T','U','V','W','X','Y','Z']
+        self.symbol_classes = ['+', '-', '*', '/', '=','!', '(', ')', 'sqrt', 'pi', 
+                               'sin', 'cos', 'tan', 'log', 'exp','!',',',"[","]",'{','}',
+                               'alpha','ascii_124','beta','Delta','exists','forall',
+                               'forward_slash','gamma','geq','gt','in','infty','int',
+                               'lambda','ldots','leq','lt','mu','neq','phi','pm',
+                               'prime','rightarrow','sigma','sum','theta','times']
         
         # 延遲載入模型，避免啟動卡死
         self._load_models()
@@ -33,37 +46,57 @@ class ModelManager:
         else:
             print(f"[警告] 找不到字母模型: {self.letter_model_path}")
 
-    def preprocess_roi(self, roi, size=(28, 28)):
-        """將切下來的筆跡區塊轉換為模型所需的格式"""
-        # 模型訓練時可能是吃 BGR 或 Grayscale，根據原本邏輯，它先被轉成灰階再轉回 BGR?
-        # 原版邏輯：cv2.cvtColor(cv2.resize(roi, (28, 28)), cv2.COLOR_GRAY2BGR) 再去 preprocess
-        # 我們簡化為 28x28 灰階再擴展維度
-        roi_resized = cv2.resize(roi, size)
-        
-        # 確認模型輸入維度，通常是 (1, 28, 28, 1)
-        normalized = roi_resized / 255.0
-        reshaped = normalized.reshape(1, 28, 28, 1)
-        return reshaped
+        if os.path.exists(self.symbol_model_path):
+            self.symbol_model = tf.keras.models.load_model(self.symbol_model_path, compile=False)
+            print("[進度] 符號模型載入成功！")
+        else:
+            print(f"[警告] 找不到符號模型: {self.symbol_model_path}")
+
+    def preprocess_roi(self, roi, mode):
+        """將切下來的筆跡區塊轉換為對應模型所需的格式"""
+        if mode == "digit":
+            # 28x28x1 灰階
+            roi_resized = cv2.resize(roi, (28, 28))
+            normalized = roi_resized / 255.0
+            reshaped = normalized.reshape(1, 28, 28, 1)
+            return reshaped
+        else:
+            # letter 與 symbol 都是 64x64x3
+            # 根據原版 preprocess_image: 灰階 -> 反轉(bitwise_not) -> resize -> 轉BGR -> 正規化
+            # 原本的 roi 已經是灰階 (0是黑底, 白線條)
+            roi_not = cv2.bitwise_not(roi) # 反轉變成白底黑線條 (與原始模型一致)
+            roi_resized = cv2.resize(roi_not, (64, 64))
+            roi_bgr = cv2.cvtColor(roi_resized, cv2.COLOR_GRAY2BGR)
+            normalized = roi_bgr / 255.0
+            reshaped = normalized.reshape(1, 64, 64, 3)
+            return reshaped
 
     def predict_canvas_content(self, drawing_layer, mode="digit"):
         """
         掃描畫布上的繪圖層，擷取有效筆跡並預測。
-        mode 可以是 "digit" 或 "letter"
+        mode 可以是 "digit", "letter", "symbol"
         """
-        model = self.digit_model if mode == "digit" else self.letter_model
+        if mode == "digit":
+            model = self.digit_model
+        elif mode == "letter":
+            model = self.letter_model
+        elif mode == "symbol":
+            model = self.symbol_model
+        else:
+            return []
+            
         if model is None:
             return []
 
         gray = cv2.cvtColor(drawing_layer, cv2.COLOR_BGR2GRAY)
         
-        # 效能優化：如果畫布全空，直接返回
         if cv2.countNonZero(gray) == 0:
             return []
             
         _, thresh = cv2.threshold(gray, 10, 255, cv2.THRESH_BINARY)
         contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         
-        bounding_boxes = [cv2.boundingRect(c) for c in contours if cv2.contourArea(c) > 50] # 過濾太小的雜訊
+        bounding_boxes = [cv2.boundingRect(c) for c in contours if cv2.contourArea(c) > 50]
         
         # 合併相近的 Bounding Boxes (簡化版)
         merge_threshold = 70
@@ -88,11 +121,13 @@ class ModelManager:
             if not merged:
                 merged_boxes.append(box)
                 
+        # 由左至右排序
+        merged_boxes.sort(key=lambda b: b[0])
+                
         predictions = []
         for box in merged_boxes:
             x, y, w, h = box
-            # 留一點 margin
-            pad = 10
+            pad = 20 # 稍微增加邊距，幫助 CNN 辨識邊緣特徵
             x1 = max(0, x - pad)
             y1 = max(0, y - pad)
             x2 = min(gray.shape[1], x + w + pad)
@@ -102,15 +137,14 @@ class ModelManager:
             if roi.size == 0:
                 continue
                 
-            input_tensor = self.preprocess_roi(roi)
+            input_tensor = self.preprocess_roi(roi, mode)
             pred_probs = model.predict(input_tensor, verbose=0)
             pred_label = np.argmax(pred_probs)
             
-            # 轉換標籤 (如果是字母模式)
-            if mode == "letter":
-                # 假設字母模型輸出 0~25 代表 A~Z
-                # 若需要特別對齊字典，需在此調整
-                pred_char = chr(pred_label + 65) 
+            if mode == "letter" and pred_label < len(self.letter_classes):
+                pred_char = self.letter_classes[pred_label]
+            elif mode == "symbol" and pred_label < len(self.symbol_classes):
+                pred_char = f" {self.symbol_classes[pred_label]} "
             else:
                 pred_char = str(pred_label)
                 

@@ -2,7 +2,7 @@ import cv2
 import numpy as np
 
 class CanvasManager:
-    def __init__(self, width=640, height=480, line_thickness=8):
+    def __init__(self, width=640, height=480, line_thickness=12):
         self.width = width
         self.height = height
         self.line_thickness = line_thickness
@@ -26,7 +26,12 @@ class CanvasManager:
         """結束目前筆畫"""
         if len(self.points) > 1:
             for i in range(1, len(self.points)):
-                cv2.line(self.drawing_layer, self.points[i - 1], self.points[i], (255, 255, 255), self.line_thickness)
+                cv2.line(self.drawing_layer, self.points[i - 1], self.points[i], (255, 255, 255), self.line_thickness, cv2.LINE_AA)
+                cv2.circle(self.drawing_layer, self.points[i], self.line_thickness // 2, (255, 255, 255), -1, cv2.LINE_AA)
+            self.paths.append(self.points.copy())
+        elif len(self.points) == 1:
+            # 畫一個點 (處理用戶只點了一下)
+            cv2.circle(self.drawing_layer, self.points[0], self.line_thickness // 2, (255, 255, 255), -1, cv2.LINE_AA)
             self.paths.append(self.points.copy())
         self.points = []
 
@@ -34,8 +39,11 @@ class CanvasManager:
         """在原畫面上即時繪製正在畫的線條 (讓使用者能看到筆跡 AR 疊加)"""
         if len(self.points) > 1:
             for i in range(1, len(self.points)):
-                # 繪製半透明或不同顏色的即時筆跡，這裡選擇亮黃色
-                cv2.line(image, self.points[i - 1], self.points[i], (0, 255, 255), self.line_thickness)
+                # 繪製不同顏色的即時筆跡，這裡選擇亮青色，開啟抗鋸齒
+                cv2.line(image, self.points[i - 1], self.points[i], (255, 200, 0), self.line_thickness, cv2.LINE_AA)
+                cv2.circle(image, self.points[i], self.line_thickness // 2, (255, 200, 0), -1, cv2.LINE_AA)
+        elif len(self.points) == 1:
+            cv2.circle(image, self.points[0], self.line_thickness // 2, (255, 200, 0), -1, cv2.LINE_AA)
 
     def has_content(self):
         """檢查畫布上是否有筆跡"""
