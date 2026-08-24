@@ -77,6 +77,10 @@ def _raw_gesture(lm, frame_w, frame_h):
     if idx_up and dist > 40:
         return 'draw_intent'
 
+    # 四指全收（握拳）→ 手動觸發辨識
+    if not idx_up and not mid_up and not rng_up and not pnk_up:
+        return 'fist'
+
     # 其餘 → 懸浮
     return 'hover'
 
@@ -96,18 +100,19 @@ class GestureStateMachine:
 
     # 進入各狀態所需的連續確認幀數
     ENTER_FRAMES = {
-        'draw':      8,   # 必須確實穩定展開食指才開始畫
-        'hover':     3,   # 抬手停止很快
+        'draw':      8,
+        'hover':     3,
         'palm_open': 4,
         'rock':      3,
+        'fist':      5,   # 握拳約 167ms，確認後觸發立即辨識
     }
 
-    # 原始手勢 → 狀態名稱的映射
     RAW_TO_STATE = {
         'draw_intent': 'draw',
         'hover':       'hover',
         'palm_open':   'palm_open',
         'rock':        'rock',
+        'fist':        'fist',
     }
 
     def __init__(self):

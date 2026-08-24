@@ -36,7 +36,7 @@ PALETTES     = [
 ]
 DRAW_DIST_THRESHOLD = 40   # 食指與中指距離 > 此值 → 畫圖
 MIN_PIXELS          = 300  # 畫布上至少要有這麼多白色像素才觸發辨識
-SEG_TIMEOUT         = 1.5  # 停筆超過此秒數才觸發自動辨識
+SEG_TIMEOUT         = 2.5  # 拉長到 2.5 秒，讓多筆畫的字有足夠時間完成
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -242,6 +242,10 @@ def main():
     hover_start_time = 0.0
 
     rock_triggered    = False
+    fist_triggered    = False
+    _fist_submit      = False   # 握拳觸發 flag
+    last_recog_boxes  = []   # [(x,y,w,h,char)] 顯示辨識框用
+    recog_box_expire  = 0.0  # 辨識框顯示到這個時間點
     prev_draw_pt      = None
     prev_time         = time.time()
     gesture_name      = 'hover'
@@ -305,6 +309,14 @@ def main():
                 recognized_text = ""
                 canvas.notify_tracking_lost()
 
+            elif gesture_name == 'fist' and not fist_triggered:
+                # ── 握拳 → 立即辨識（手動觸發）──────────────
+                fist_triggered = True
+                canvas.end_stroke()
+                canvas.notify_tracking_lost()
+                # 設置戇 flag，在後面 _do_recognize 定義後再執行
+                _fist_submit = True
+
             elif gesture_name == 'draw':
                 # ── 確認進入畫圖模式 ──────────────────────
                 is_drawing     = True
@@ -362,11 +374,11 @@ def main():
                     cv2.circle(disp, (x_idx, y_idx), 20, (200, 200, 200),  1, cv2.LINE_AA)
 
         else:
-            # 完全沒偵測到手 → 狀態機快速重置回 hover
             gesture_sm.reset()
-            pointer.reset()       # 重置平滑器，避免手部重新入鹟時有殘留地跟過去的舊座標
+            pointer.reset()
             gesture_name     = 'hover'
             gesture_progress = 0.0
+            fist_triggered    = False
             canvas.notify_tracking_lost()
             prev_draw_pt     = None
             last_hovered_btn = None
@@ -417,35 +429,68 @@ def main():
         else:
             last_hovered_btn = None
 
-        # ── 自動分字辨識 ──────────────────────────────────
-        pixel_count = canvas.get_pixel_count()
+        # ── 自動辨識倒數進度條 ────────────────────────────
+        pixel_count  = canvas.get_pixel_count()
         time_elapsed = curr_time - last_draw_time
+        has_enough   = (canvas.has_content() and pixel_count >= MIN_PIXELS
+                        and not is_drawing and mode_name != 'magic')
 
-        # Magic 模式不做辨識，只做 NeuralBloom 娛樂效果
-        if (not is_drawing
-                and mode_name != 'magic'
-                and canvas.has_content()
-                and pixel_count >= MIN_PIXELS
-                and time_elapsed > SEG_TIMEOUT):
+        if has_enough:
+            seg_progress = min(1.0, time_elapsed / SEG_TIMEOUT)
+            # 在底部文字框上方顯示一條很細的進度條
+            bar_w = int((W - 30) * seg_progress)
+            bar_y = H - 93
+            cv2.line(disp, (15, bar_y), (15 + bar_w, bar_y), (60, 255, 120), 3, cv2.LINE_AA)
+            # 提示文字
+            hint = f"✓ Fist to submit  |  Auto in {max(0, SEG_TIMEOUT - time_elapsed):.1f}s"
+            label(disp, hint, 20, bar_y - 6, scale=0.42, color=(120, 255, 160))
 
+        # ── 辨識函式 (閉包) ───────────────────────────────
+        def _do_recognize():
+            nonlocal recognized_text, ar_answer, last_recog_boxes, recog_box_expire, last_draw_time
             preds = model_mgr.predict_canvas_content(
                 canvas.drawing_layer, mode=mode_name)
-
             new_chars = ""
+            last_recog_boxes = []
             for box, char, conf in preds:
                 new_chars += char
-
+                last_recog_boxes.append((box[0], box[1], box[2], box[3], char))
             if new_chars:
                 recognized_text += new_chars
-
-                # AR 數學解題
+                recog_box_expire = curr_time + 2.0  # 顯示 2 秒
                 if '=' in recognized_text:
                     expr = recognized_text.rsplit('=', 1)[0]
                     ans, ok = safe_math_eval(expr)
                     if ok:
                         ar_answer = (ans, curr_time + 4.0)
-
             canvas.clear()
+            last_draw_time = curr_time  # 重置計時
+
+        # Magic 模式不做辨識
+        if has_enough and time_elapsed > SEG_TIMEOUT:
+            _do_recognize()
+        elif _fist_submit:
+            _fist_submit = False
+            if canvas.has_content() and canvas.get_pixel_count() >= MIN_PIXELS:
+                _do_recognize()
+
+        # ── 辨識結果邊界框顯示 ───────────────────────────
+        if curr_time < recog_box_expire:
+            fade = min(1.0, (recog_box_expire - curr_time) / 0.5)  # 最後 0.5s 淡出
+            for bx, by, bw, bh, bchar in last_recog_boxes:
+                pad = 18
+                x1, y1 = max(0, bx - pad), max(0, by - pad)
+                x2, y2 = min(W, bx + bw + pad), min(H, by + bh + pad)
+                col = tuple(int(c * fade) for c in (60, 255, 120))
+                cv2.rectangle(disp, (x1, y1), (x2, y2), col, 2, cv2.LINE_AA)
+                # 角落裝飾線
+                sz = 12
+                for cx2, cy2, dx, dy in [(x1,y1,1,1),(x2,y1,-1,1),(x1,y2,1,-1),(x2,y2,-1,-1)]:
+                    cv2.line(disp,(cx2,cy2),(cx2+dx*sz,cy2),col,3,cv2.LINE_AA)
+                    cv2.line(disp,(cx2,cy2),(cx2,cy2+dy*sz),col,3,cv2.LINE_AA)
+                # 字元標籤
+                label(disp, bchar, x1 + 4, y1 - 6, scale=0.7,
+                      color=tuple(int(c * fade) for c in (100, 255, 150)), thick=2)
 
         # ── 筆跡 AR 疊加 (著色) ───────────────────────────
         draw_lyr = canvas.drawing_layer
