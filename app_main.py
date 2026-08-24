@@ -40,6 +40,32 @@ SEG_TIMEOUT         = 1.5  # 停筆超過此秒數才觸發自動辨識
 
 
 # ─────────────────────────────────────────────────────────────────
+#  上游座標平滑器（所有邏輯都用平滑後座標）
+# ─────────────────────────────────────────────────────────────────
+
+class PointerSmoother:
+    """
+    在 MediaPipe 原始座標讀出後立刻套 EMA 低通濾波。
+    - alpha 越小 → 越平滑但反應越慢
+    - alpha=0.30 在書寫流暢度和抗抖動之間取得平衡
+    """
+    def __init__(self, alpha=0.28):
+        self._a = alpha
+        self._x = self._y = None
+
+    def update(self, raw_x, raw_y):
+        if self._x is None:
+            self._x, self._y = float(raw_x), float(raw_y)
+        else:
+            self._x = self._a * raw_x + (1 - self._a) * self._x
+            self._y = self._a * raw_y + (1 - self._a) * self._y
+        return int(self._x), int(self._y)
+
+    def reset(self):
+        self._x = self._y = None
+
+
+# ─────────────────────────────────────────────────────────────────
 #  UI 工具函式
 # ─────────────────────────────────────────────────────────────────
 
@@ -192,7 +218,10 @@ def main():
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, H)
     cap.set(cv2.CAP_PROP_FPS, 30)
 
-    tracker   = HandTracker()
+    tracker   = HandTracker(
+        min_hand_detection_confidence=0.7,
+        min_tracking_confidence=0.7
+    )
     canvas    = CanvasManager(width=W, height=H, line_thickness=7)
     model_mgr = ModelManager()
     particles = ParticleSystem()
@@ -202,7 +231,8 @@ def main():
     palette_idx = 0
 
     gesture_sm   = GestureStateMachine()
-    neural_bloom = NeuralBloom()          # 神經突觸爆發效果
+    neural_bloom = NeuralBloom()
+    pointer      = PointerSmoother(alpha=0.28)  # 上游座標平滑器
     recognized_text = ""
     ar_answer       = None   # (str, expire_time)
     last_draw_time  = time.time()
@@ -236,8 +266,12 @@ def main():
         if results.hand_landmarks:
             lm = results.hand_landmarks[0]
 
-            x_idx = int(np.clip(lm[8].x * W, 5, W - 5))
-            y_idx = int(np.clip(lm[8].y * H, 5, H - 5))
+            # ── 上游座標平滑：先對 raw landmark 做 EMA，後續所有操作都用平滑後的座標 ──
+            raw_x = int(np.clip(lm[8].x * W, 5, W - 5))
+            raw_y = int(np.clip(lm[8].y * H, 5, H - 5))
+            x_idx, y_idx = pointer.update(raw_x, raw_y)
+
+            # 中指只用於手勢判斷，對中指也稍微平滑
             x_mid = int(lm[12].x * W)
             y_mid = int(lm[12].y * H)
             hover_point = (x_idx, y_idx)
@@ -330,6 +364,7 @@ def main():
         else:
             # 完全沒偵測到手 → 狀態機快速重置回 hover
             gesture_sm.reset()
+            pointer.reset()       # 重置平滑器，避免手部重新入鹟時有殘留地跟過去的舊座標
             gesture_name     = 'hover'
             gesture_progress = 0.0
             canvas.notify_tracking_lost()
@@ -422,8 +457,8 @@ def main():
         # 即時筆跡（當幀尚未 commit 的點）
         canvas.draw_current_stroke(disp, ink_color=ink_bgr)
 
-        # ── 輕量骨架（可選：不顯示以保持畫面清爽）─────────
-        # disp = tracker.draw_landmarks(disp, results)
+        # ── 軳架顯示（幫助使用者看到 MediaPipe 實際追蹤到哪裏）──
+        disp = tracker.draw_landmarks(disp, results)
 
         # ── FPS 顯示 ──────────────────────────────────────
         now  = time.time()
