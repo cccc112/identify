@@ -219,8 +219,8 @@ def main():
     cap.set(cv2.CAP_PROP_FPS, 30)
 
     tracker   = HandTracker(
-        min_hand_detection_confidence=0.7,
-        min_tracking_confidence=0.7
+        min_hand_detection_confidence=0.5,  # 不要太嚴，避免漏偵測
+        min_tracking_confidence=0.45
     )
     canvas    = CanvasManager(width=W, height=H, line_thickness=7)
     model_mgr = ModelManager()
@@ -283,7 +283,7 @@ def main():
 
             # ── 手勢分支 ──────────────────────────────────
 
-            if gesture_name == 'palm_open':
+            if gesture_name == 'palm_open' and mode_name == 'magic':
                 palm_cx, palm_cy = get_palm_center(lm, W, H)
                 avg_z  = sum(lm[i].z for i in [0, 5, 9, 13, 17]) / 5
                 radius = int(np.clip(85 - avg_z * 380, 50, 130))

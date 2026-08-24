@@ -14,11 +14,6 @@ class CanvasManager:
         self.points   = []   # 目前正在進行中的筆畫點
         self.paths    = []   # 已完成的所有筆畫
 
-        # EMA 濾波器：平滑手部抖動
-        self._ema_x = None
-        self._ema_y = None
-        self._ema_alpha = 0.40  # 越小越滑順但越有延遲，0.4 是體感最佳平衡
-
         # 容錯 buffer：短暫漏偵測時不要切斷筆畫
         self._miss_frames  = 0
         self._max_miss     = 4   # 最多容忍連續 4 幀遺失
@@ -28,28 +23,17 @@ class CanvasManager:
 
     # ── 公開 API ──────────────────────────────────────────────
 
-    def smooth_point(self, raw_x, raw_y):
-        """EMA 低通濾波，消除手部抖動"""
-        if self._ema_x is None:
-            self._ema_x, self._ema_y = float(raw_x), float(raw_y)
-        else:
-            a = self._ema_alpha
-            self._ema_x = a * raw_x + (1 - a) * self._ema_x
-            self._ema_y = a * raw_y + (1 - a) * self._ema_y
-        return int(self._ema_x), int(self._ema_y)
-
     def add_point(self, raw_x, raw_y):
-        """加入新座標（自動套用 EMA 濾波與最小間距過濾）"""
+        """加入新座標（只做最小間距過濾）"""
         self._miss_frames = 0
-        sx, sy = self.smooth_point(raw_x, raw_y)
 
-        # 如果與上一個點太近，跳過（避免鋸齒密點）
+        # 如果與上一個點太近，跳過
         if self.points:
             lx, ly = self.points[-1]
-            if math.sqrt((sx - lx) ** 2 + (sy - ly) ** 2) < self._min_dist:
+            if math.sqrt((raw_x - lx) ** 2 + (raw_y - ly) ** 2) < self._min_dist:
                 return
 
-        self.points.append((sx, sy))
+        self.points.append((raw_x, raw_y))
 
     def notify_tracking_lost(self):
         """通知系統這一幀追蹤失敗；容錯 N 幀後才真正結束筆畫"""
@@ -60,7 +44,6 @@ class CanvasManager:
     def end_stroke(self):
         """強制結束目前筆畫，寫入 drawing_layer"""
         self._miss_frames = 0
-        self._ema_x = self._ema_y = None  # 重置濾波器
 
         if len(self.points) > 1:
             for i in range(1, len(self.points)):
@@ -81,7 +64,6 @@ class CanvasManager:
         self.drawing_layer = np.zeros((self.height, self.width, 3), dtype=np.uint8)
         self.points = []
         self.paths  = []
-        self._ema_x = self._ema_y = None
         self._miss_frames = 0
 
     def draw_current_stroke(self, image, ink_color=(255, 200, 50)):
