@@ -42,23 +42,63 @@ class CanvasManager:
             self.end_stroke()
 
     def end_stroke(self):
-        """強制結束目前筆畫，寫入 drawing_layer"""
+        """強制結束目前筆畫，寫入 drawing_layer。
+        結束前自動裁掉尾部抖動點（從 draw→hover 切換時的過渡幀雜訊）。
+        """
         self._miss_frames = 0
+        pts = self._trim_tail(self.points)
 
-        if len(self.points) > 1:
-            for i in range(1, len(self.points)):
+        if len(pts) > 1:
+            for i in range(1, len(pts)):
                 cv2.line(self.drawing_layer,
-                         self.points[i - 1], self.points[i],
+                         pts[i - 1], pts[i],
                          (255, 255, 255), self.line_thickness, cv2.LINE_AA)
-                cv2.circle(self.drawing_layer, self.points[i],
+                cv2.circle(self.drawing_layer, pts[i],
                            self.line_thickness // 2, (255, 255, 255), -1, cv2.LINE_AA)
-            self.paths.append(self.points.copy())
-        elif len(self.points) == 1:
-            cv2.circle(self.drawing_layer, self.points[0],
+            self.paths.append(pts)
+        elif len(pts) == 1:
+            cv2.circle(self.drawing_layer, pts[0],
                        self.line_thickness // 2 + 1, (255, 255, 255), -1, cv2.LINE_AA)
-            self.paths.append(self.points.copy())
+            self.paths.append(pts)
 
         self.points = []
+
+    def _trim_tail(self, pts, tail_len=5, angle_threshold=90):
+        """
+        裁掉筆畫尾端的抖動點。
+        原理：計算最後 tail_len 個點與主方向的夾角，
+              若偏轉超過 angle_threshold 度就截斷。
+        """
+        if len(pts) < tail_len + 2:
+            return list(pts)
+
+        pts = list(pts)
+        # 主方向：用倒數 (tail_len+1) 到倒數 (tail_len) 這一段
+        ref_idx = max(0, len(pts) - tail_len - 2)
+        ref_end = len(pts) - tail_len - 1
+        dx_ref = pts[ref_end][0] - pts[ref_idx][0]
+        dy_ref = pts[ref_end][1] - pts[ref_idx][1]
+        if dx_ref == 0 and dy_ref == 0:
+            return pts
+
+        cut_at = len(pts)
+        for k in range(len(pts) - tail_len, len(pts)):
+            dx = pts[k][0] - pts[k - 1][0]
+            dy = pts[k][1] - pts[k - 1][1]
+            if dx == 0 and dy == 0:
+                continue
+            # 用 cross product 計算夾角
+            dot   = dx * dx_ref + dy * dy_ref
+            mag   = math.sqrt(dx*dx + dy*dy) * math.sqrt(dx_ref*dx_ref + dy_ref*dy_ref)
+            if mag == 0:
+                continue
+            cosA  = max(-1.0, min(1.0, dot / mag))
+            angle = math.degrees(math.acos(cosA))
+            if angle > angle_threshold:
+                cut_at = k
+                break
+
+        return pts[:cut_at] if cut_at > 2 else pts
 
     def clear(self):
         self.drawing_layer = np.zeros((self.height, self.width, 3), dtype=np.uint8)

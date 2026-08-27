@@ -237,9 +237,11 @@ class ModelManager:
 
         return predictions
 
-    def _group_strokes(self, paths, merge_threshold=80):
+    def _group_strokes(self, paths, gap_threshold=30):
         """
         將筆畫依空間鄰近性合併成字元群組，書寫順序由第一筆決定。
+        gap_threshold: 兩個 bbox 邊緣間最大允許間距（像素）。
+        用邊緣間距而非中心距離，避免大字元把遠處的字也吸進來。
         回傳 [(merged_bbox, [path_indices]), ...]
         """
         def path_bbox(path):
@@ -252,18 +254,17 @@ class ModelManager:
             return (x1, y1, max(1, x2 - x1), max(1, y2 - y1))
 
         bboxes = [path_bbox(p) for p in paths]
-        # groups: list of [bbox_list, [path_indices]]
-        groups = []
+        groups = []   # list of [[bbox], [path_indices]]
 
         for i, (x, y, w, h) in enumerate(bboxes):
-            cx, cy = x + w // 2, y + h // 2
             assigned = False
 
             for j in range(len(groups)):
                 gx, gy, gw, gh = groups[j][0]
-                # 如果筆畫中心落在群組 bbox 擴展後的範圍內 → 合併
-                if (gx - merge_threshold <= cx <= gx + gw + merge_threshold and
-                        gy - merge_threshold <= cy <= gy + gh + merge_threshold):
+                # bbox 邊緣間距 (不重疊時才有值，重疊時為 0)
+                gap_x = max(0, x - (gx + gw)) if x > gx else max(0, gx - (x + w))
+                gap_y = max(0, y - (gy + gh)) if y > gy else max(0, gy - (y + h))
+                if gap_x < gap_threshold and gap_y < gap_threshold:
                     nx1 = min(x, gx)
                     ny1 = min(y, gy)
                     nx2 = max(x + w, gx + gw)
