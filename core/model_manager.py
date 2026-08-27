@@ -186,7 +186,7 @@ class ModelManager:
 
         MIN_CONFIDENCE = 0.55
 
-        groups = self._group_strokes(paths, merge_threshold=80)
+        groups = self._group_strokes(paths)   # 使用預設 gap_threshold=30
         predictions = []
 
         for group_bbox, path_indices in groups:

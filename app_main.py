@@ -66,42 +66,106 @@ class PointerSmoother:
 
 
 # ─────────────────────────────────────────────────────────────────
-#  UI 工具函式
+#  Material You 色彩 Token (BGR)
+# ─────────────────────────────────────────────────────────────────
+M3 = {
+    'bg':            (14,  13,  16),   # #100D0E  近黑背景
+    'surface':       (32,  29,  34),   # #22201E  卡片底色
+    'surface_hi':    (52,  48,  56),   # #383038  懸浮高亮
+    'primary':       (250, 195, 168),  # #A8C3FA  主色（藍，BGR 反轉）
+    'primary_dim':   (140, 110,  95),  # 主色暗版
+    'secondary':     (208, 198, 197),  # #C5C6D0  次要色
+    'tertiary':      (120, 200, 255),  # #FFC878  第三色（暖橙，BGR）
+    'on_surface':    (226, 226, 230),  # #E2E2E6  主要文字
+    'on_surface_lo': (150, 148, 155),  # 次要文字
+    'error':         ( 80,  80, 200),  # 紅色
+    'success':       (120, 255,  80),  # 綠色
+    # 模式專屬
+    'magic_col':     (240, 150, 200),  # 魔法紫
+    'art_col':       (120, 200, 255),  # 藝術暖橙
+}
+
+# 各模式的 tonal surface 色
+MODE_COLORS = {
+    'digit':  ((40, 35, 50),   M3['primary']),
+    'letter': ((35, 50, 40),   M3['success']),
+    'symbol': ((50, 40, 35),   M3['tertiary']),
+    'magic':  ((50, 30, 60),   M3['magic_col']),
+    'art':    ((30, 50, 55),   M3['art_col']),
+}
+
+# ─────────────────────────────────────────────────────────────────
+#  UI 工具函式（Material You 版）
 # ─────────────────────────────────────────────────────────────────
 
-def glass_rect(img, rect, alpha=0.50, bg=(25, 25, 35), radius=12, border=(100, 100, 130)):
-    """半透明圓角毛玻璃矩形"""
+def pill(img, rect, bg=None, alpha=0.60, border=None, glow=False):
+    """Pill 形狀（完全圓角）的毛玻璃卡片，radius = height/2"""
     x1, y1, x2, y2 = rect
     x1, y1 = max(0, x1), max(0, y1)
     x2, y2 = min(img.shape[1], x2), min(img.shape[0], y2)
     if x2 <= x1 or y2 <= y1:
         return
 
-    sub  = img[y1:y2, x1:x2].copy()
+    if bg is None:
+        bg = M3['surface']
+
+    sub = img[y1:y2, x1:x2].copy()
     h, w = sub.shape[:2]
-    r    = min(radius, h // 2, w // 2)
+    r    = h // 2   # pill: 半圓角
 
     mask = np.zeros((h, w), dtype=np.uint8)
     cv2.rectangle(mask, (r, 0), (w - r, h), 255, -1)
-    cv2.rectangle(mask, (0, r), (w, h - r), 255, -1)
-    for cx, cy in [(r, r), (w-r, r), (r, h-r), (w-r, h-r)]:
-        cv2.circle(mask, (cx, cy), r, 255, -1)
+    for cx2, cy2 in [(r, r), (w - r, r), (r, h - r), (w - r, h - r)]:
+        cv2.circle(mask, (cx2, cy2), r, 255, -1)
 
-    blurred = cv2.GaussianBlur(sub, (15, 15), 0)
-    color_layer = np.full_like(sub, bg[::-1] if len(bg) == 3 else bg)
-    blended = cv2.addWeighted(blurred, 1 - alpha, color_layer, alpha, 0)
+    # 毛玻璃底
+    blurred      = cv2.GaussianBlur(sub, (11, 11), 0)
+    color_layer  = np.full_like(sub, bg)
+    blended      = cv2.addWeighted(blurred, 1 - alpha, color_layer, alpha, 0)
+    np.copyto(sub, blended, where=(mask > 0)[:, :, None])
 
-    np.copyto(sub, blended, where=(mask == 255)[:, :, None])
+    # 邊框（細 1px，用 border 色或白半透）
+    if border is None:
+        border = M3['surface_hi']
+    edge = cv2.Canny(mask, 100, 200)
+    edge = cv2.dilate(edge, np.ones((1, 1), np.uint8))
+    sub[edge > 0] = border
 
-    # 邊框
-    edge_mask = cv2.Canny(mask, 100, 200)
-    edge_mask = cv2.dilate(edge_mask, np.ones((2, 2), np.uint8))
-    sub[edge_mask > 0] = border
+    # 可選：底部外發光
+    if glow and border:
+        img[min(y2, img.shape[0]-1), x1:x2] = border  # subtle line glow
 
     img[y1:y2, x1:x2] = sub
 
 
-def label(img, text, x, y, scale=0.55, color=(220, 220, 220), thick=1):
+def glass_rect(img, rect, alpha=0.50, bg=(25, 25, 35), radius=12, border=(80, 80, 100)):
+    """保留相容性：對較大面板用較大 radius"""
+    x1, y1, x2, y2 = rect
+    x1, y1 = max(0, x1), max(0, y1)
+    x2, y2 = min(img.shape[1], x2), min(img.shape[0], y2)
+    if x2 <= x1 or y2 <= y1:
+        return
+    sub  = img[y1:y2, x1:x2].copy()
+    h, w = sub.shape[:2]
+    r    = min(radius, h // 2, w // 2)
+    mask = np.zeros((h, w), dtype=np.uint8)
+    cv2.rectangle(mask, (r, 0), (w - r, h), 255, -1)
+    cv2.rectangle(mask, (0, r), (w, h - r), 255, -1)
+    for cx2, cy2 in [(r, r), (w-r, r), (r, h-r), (w-r, h-r)]:
+        cv2.circle(mask, (cx2, cy2), r, 255, -1)
+    blurred     = cv2.GaussianBlur(sub, (15, 15), 0)
+    color_layer = np.full_like(sub, bg)
+    blended     = cv2.addWeighted(blurred, 1 - alpha, color_layer, alpha, 0)
+    np.copyto(sub, blended, where=(mask == 255)[:, :, None])
+    edge = cv2.Canny(mask, 100, 200)
+    edge = cv2.dilate(edge, np.ones((2, 2), np.uint8))
+    sub[edge > 0] = border
+    img[y1:y2, x1:x2] = sub
+
+
+def label(img, text, x, y, scale=0.52, color=None, thick=1):
+    if color is None:
+        color = M3['on_surface']
     cv2.putText(img, text, (x, y), cv2.FONT_HERSHEY_DUPLEX,
                 scale, color, thick, cv2.LINE_AA)
 
@@ -118,78 +182,97 @@ def is_in(pt, rect):
 
 
 # ─────────────────────────────────────────────────────────────────
-#  主 UI 繪製
+#  主 UI 繪製（Material You / Pixel 風格）
 # ─────────────────────────────────────────────────────────────────
 
 def draw_ui(img, mode, palette_idx, gesture_name,
             text, hover_pt, last_btn, hover_prog, ar_ans=None):
     """
-    繪製整個 AR UI。
+    Material You 風格 UI。
     回傳: hovered_btn_name | None
     """
-    # ── 頂部按鈕列 ──────────────────────────────────────
-    BTN_H = 50
-    PAD   = 12
+    PAD   = 10
+    BTN_H = 44   # pill 高度
 
-    btn_mode  = (PAD,        PAD, 175,           PAD + BTN_H)
-    btn_ink   = (185,        PAD, 310,           PAD + BTN_H)
-    btn_back  = (W - 215,   PAD, W - 110,       PAD + BTN_H)
-    btn_clear = (W - 100,   PAD, W - PAD,       PAD + BTN_H)
+    # ── 頂部 pill 按鈕列 ─────────────────────────────────
+    # 模式按鈕（寬一點，顯示完整標籤）
+    btn_mode  = (PAD,       PAD, 165,      PAD + BTN_H)
+    btn_ink   = (172,       PAD, 307,      PAD + BTN_H)
+    btn_back  = (W - 200,  PAD, W - 108,  PAD + BTN_H)
+    btn_clear = (W - 100,  PAD, W - PAD,  PAD + BTN_H)
 
-    for rect, bg in [(btn_mode,  (40, 25, 70)),
-                     (btn_ink,   (20, 55, 40)),
-                     (btn_back,  (65, 35, 25)),
-                     (btn_clear, (70, 15, 15))]:
-        glass_rect(img, rect, bg=bg)
+    mode_bg, mode_col = MODE_COLORS.get(mode, (M3['surface'], M3['primary']))
+    ink_bgr_color     = PALETTES[palette_idx][1]  # 取得目前墨水色
 
+    # 各按鈕 tonal surface
+    pill(img, btn_mode,  bg=mode_bg,       alpha=0.70, border=mode_col)
+    pill(img, btn_ink,   bg=M3['surface'], alpha=0.65, border=ink_bgr_color)
+    pill(img, btn_back,  bg=(35, 35, 55),  alpha=0.65, border=M3['secondary'])
+    pill(img, btn_clear, bg=(45, 25, 25),  alpha=0.65, border=M3['error'])
+
+    # 按鈕文字
     ink_name = PALETTES[palette_idx][0]
     if mode == 'magic':
-        mode_color, mode_label = (200, 160, 255), '✦ MAGIC'
+        mode_label = '  MAGIC'
     elif mode == 'art':
-        mode_color, mode_label = (255, 200, 120), '🎨 ART'
+        mode_label = '  ART'
     else:
-        mode_color, mode_label = (160, 255, 180), f'Mode: {mode.upper()}'
-    label(img, mode_label,            btn_mode[0]+10,  btn_mode[1]+32,  color=mode_color)
-    label(img, f"Ink: {ink_name}",    btn_ink[0]+10,   btn_ink[1]+32,   color=(160, 255, 220))
-    label(img, "< Undo",               btn_back[0]+14,  btn_back[1]+32,  color=(190, 190, 255))
-    label(img, "Clear",                btn_clear[0]+16, btn_clear[1]+32, color=(200, 140, 255))
+        mode_label = f'  {mode.upper()}'
 
-    # ── 手勢狀態提示 (左下角) ────────────────────────────
-    gesture_colors = {
-        'draw':      (60,  255, 100),
-        'hover':     (200, 200,  60),
-        'palm_open': (60,  160, 255),
-        'rock':      (60,   60, 255),
-        'fist':      (255, 200,  60),
-        'thumb_up':  (255, 180, 100),
-    }
-    gc = gesture_colors.get(gesture_name, (160, 160, 160))
-    gesture_icons = {
-        'draw': '✏ DRAW', 'hover': '🖱 HOVER',
-        'palm_open': '✋ MAGIC', 'rock': '🤘 CAST',
-        'fist': '✊ SUBMIT', 'thumb_up': '👍 UNDO',
-    }
-    gi = gesture_icons.get(gesture_name, '· ·  ·')
-    glass_rect(img, (PAD, H - 110, 170, H - PAD - 90), alpha=0.4, bg=(20, 20, 20))
-    label(img, gi, PAD + 10, H - 110 + 32, scale=0.52, color=gc)
+    label(img, mode_label,        btn_mode[0]+4,  btn_mode[1]+28,  color=mode_col,        scale=0.52)
+    label(img, f'  {ink_name}',   btn_ink[0]+4,   btn_ink[1]+28,   color=ink_bgr_color,   scale=0.52)
+    label(img, '  Undo',          btn_back[0]+4,  btn_back[1]+28,  color=M3['secondary'], scale=0.52)
+    label(img, '  Clear',         btn_clear[0]+4, btn_clear[1]+28, color=M3['error'],     scale=0.52)
 
-    # ── 底部輸出文字框 ───────────────────────────────────
-    bar = (PAD, H - 85, W - PAD, H - PAD)
-    glass_rect(img, bar, alpha=0.42, bg=(10, 10, 15))
+    # 小圓點色塊（對應墨水色）
+    dot_cx = btn_ink[0] + 16
+    dot_cy = (btn_ink[1] + btn_ink[3]) // 2
+    cv2.circle(img, (dot_cx, dot_cy), 7, ink_bgr_color, -1, cv2.LINE_AA)
+    cv2.circle(img, (dot_cx, dot_cy), 7, M3['surface_hi'], 1, cv2.LINE_AA)
+
+    # ── 手勢狀態 badge（右下角 pill chip）────────────────
+    gesture_info = {
+        'draw':      (M3['success'],   'DRAW ✏'),
+        'hover':     (M3['secondary'], 'HOVER'),
+        'palm_open': (M3['magic_col'], 'MAGIC ✋'),
+        'rock':      (M3['error'],     'CAST  '),
+        'fist':      (M3['tertiary'],  'SUBMIT ✊'),
+        'thumb_up':  (M3['primary'],   'UNDO  '),
+    }
+    gcol, gtext = gesture_info.get(gesture_name, (M3['on_surface_lo'], '  ·  '))
+    chip_w = 130
+    chip_rect = (W - chip_w - PAD, H - 105, W - PAD, H - 105 + BTN_H)
+    pill(img, chip_rect, bg=M3['surface'], alpha=0.75, border=gcol)
+    label(img, gtext, chip_rect[0] + 14, chip_rect[1] + 28, color=gcol, scale=0.50)
+
+    # ── 底部輸出文字框（大圓角，更高）─────────────────────
+    bar_y1, bar_y2 = H - 78, H - PAD
+    bar = (PAD, bar_y1, W - PAD, bar_y2)
+    glass_rect(img, bar, alpha=0.55, bg=M3['bg'], radius=22,
+               border=M3['surface_hi'])
+    # 左側色條指示目前模式
+    indicator_col = mode_col
+    cv2.rectangle(img,
+                  (PAD + 4, bar_y1 + 8),
+                  (PAD + 8, bar_y2 - 8),
+                  indicator_col, -1, cv2.LINE_AA)
+    # 輸出文字
     display = recognized_text_display(text)
-    label(img, display, bar[0] + 16, bar[1] + 52,
-          scale=1.0, color=(60, 255, 100), thick=2)
+    label(img, display, PAD + 22, bar_y1 + 48,
+          scale=1.05, color=M3['on_surface'], thick=2)
 
-    # ── AR 數學解答 ──────────────────────────────────────
+    # ── AR 數學解答浮卡 ──────────────────────────────────
     if ar_ans:
-        ans_text = f"= {ar_ans}"
-        glass_rect(img, (160, 185, 480, 265), alpha=0.55, bg=(10, 40, 10))
-        # 外發光
-        for off, col in [(3, (0, 80, 0)), (1, (0, 200, 50))]:
-            cv2.putText(img, ans_text, (170 + off, 244),
-                        cv2.FONT_HERSHEY_DUPLEX, 1.35, col, 3 + off, cv2.LINE_AA)
-        cv2.putText(img, ans_text, (170, 244),
-                    cv2.FONT_HERSHEY_DUPLEX, 1.35, (80, 255, 120), 2, cv2.LINE_AA)
+        ans_text = f'= {ar_ans}'
+        card = (150, 175, W - 150, 265)
+        glass_rect(img, card, alpha=0.65, bg=(20, 40, 20), radius=18,
+                   border=M3['success'])
+        # 外發光字
+        for off, col in [(3, (0, 60, 0)), (1, (0, 160, 40))]:
+            cv2.putText(img, ans_text, (167 + off, 238),
+                        cv2.FONT_HERSHEY_DUPLEX, 1.3, col, 3 + off, cv2.LINE_AA)
+        cv2.putText(img, ans_text, (167, 238),
+                    cv2.FONT_HERSHEY_DUPLEX, 1.3, M3['success'], 2, cv2.LINE_AA)
 
     # ── Hover 高亮與進度弧 ───────────────────────────────
     hovered = None
@@ -199,12 +282,16 @@ def draw_ui(img, mode, palette_idx, gesture_name,
             if is_in(hover_pt, rect):
                 hovered = name
                 if name == last_btn and hover_prog > 0:
-                    cv2.rectangle(img, rect[:2], rect[2:], (255, 255, 255), 2, cv2.LINE_AA)
+                    # 亮邊框高亮
+                    cv2.rectangle(img, rect[:2], rect[2:],
+                                  M3['on_surface'], 2, cv2.LINE_AA)
                     cx = (rect[0] + rect[2]) // 2
-                    hover_arc(img, cx, rect[3] + 16, 11, hover_prog)
+                    hover_arc(img, cx, rect[3] + 14, 10, hover_prog,
+                              color=M3['primary'])
                 break
 
     return hovered
+
 
 
 def recognized_text_display(text, max_chars=55):
@@ -333,16 +420,18 @@ def main():
                     save_dir = "C:/hand/saved_art"
                     os.makedirs(save_dir, exist_ok=True)
                     fname = f"{save_dir}/art_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
-                    # 將彩色墨水版疊加後再存
                     save_img = np.zeros_like(canvas.drawing_layer)
                     wm = cv2.inRange(canvas.drawing_layer, (200,200,200), (255,255,255))
                     save_img[wm > 0] = ink_bgr
                     cv2.imwrite(fname, save_img)
-                    # 短暫提示
                     last_recog_boxes = [(-1, -1, -1, -1, f"Saved! {os.path.basename(fname)}")]
                     recog_box_expire = curr_time + 2.5
+                elif not canvas.has_content() and recognized_text:
+                    # ── 空畫布握拳 → 快速清除輸出文字 ─────────
+                    recognized_text = ""
+                    _fist_submit = False
                 else:
-                    # ── 其他模式：握拳 → 立即辨識 ─────────────
+                    # ── 一般模式：握拳 → 立即辨識 ─────────────
                     _fist_submit = True
 
             elif gesture_name == 'draw':
