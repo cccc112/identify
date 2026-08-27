@@ -162,3 +162,118 @@ class ModelManager:
             predictions.append(((x, y, w, h), pred_char, confidence))
 
         return predictions
+
+    # ─────────────────────────────────────────────────────────────
+    #  書寫順序辨識（主要入口）
+    # ─────────────────────────────────────────────────────────────
+
+    def predict_from_paths(self, paths, canvas_w, canvas_h,
+                           line_thickness=7, mode="digit"):
+        """
+        依照書寫順序辨識。
+        - 把空間上接近的筆畫合併成同一個字元群組
+        - 群組順序 = 該群組第一筆畫的書寫時間順序
+        - 對每個群組單獨渲染後送入模型
+        回傳：[(bbox, char, confidence), ...]  依書寫順序排列
+        """
+        if not paths or mode not in ('digit', 'letter', 'symbol'):
+            return []
+        model = {'digit': self.digit_model,
+                 'letter': self.letter_model,
+                 'symbol': self.symbol_model}.get(mode)
+        if model is None:
+            return []
+
+        MIN_CONFIDENCE = 0.55
+
+        groups = self._group_strokes(paths, merge_threshold=80)
+        predictions = []
+
+        for group_bbox, path_indices in groups:
+            gx, gy, gw, gh = group_bbox
+            if gw * gh < 200:
+                continue
+
+            # 只把該群組的筆畫渲染到獨立的灰階畫布
+            mini = np.zeros((canvas_h, canvas_w), dtype=np.uint8)
+            for idx in path_indices:
+                path = paths[idx]
+                if len(path) > 1:
+                    for i in range(1, len(path)):
+                        cv2.line(mini, path[i-1], path[i],
+                                 255, line_thickness, cv2.LINE_AA)
+                        cv2.circle(mini, path[i],
+                                   line_thickness // 2, 255, -1, cv2.LINE_AA)
+                elif len(path) == 1:
+                    cv2.circle(mini, path[0],
+                               line_thickness // 2 + 1, 255, -1, cv2.LINE_AA)
+
+            # 裁出含 padding 的 ROI
+            pad = 20
+            x1 = max(0, gx - pad)
+            y1 = max(0, gy - pad)
+            x2 = min(canvas_w, gx + gw + pad)
+            y2 = min(canvas_h, gy + gh + pad)
+            roi = mini[y1:y2, x1:x2]
+            if roi.size == 0:
+                continue
+
+            input_tensor = self.preprocess_roi(roi, mode)
+            pred_probs   = model.predict(input_tensor, verbose=0)[0]
+            pred_label   = int(np.argmax(pred_probs))
+            confidence   = float(pred_probs[pred_label])
+
+            if confidence < MIN_CONFIDENCE:
+                continue
+
+            if mode == "letter" and pred_label < len(self.letter_classes):
+                pred_char = self.letter_classes[pred_label]
+            elif mode == "symbol" and pred_label < len(self.symbol_classes):
+                pred_char = f" {self.symbol_classes[pred_label]} "
+            else:
+                pred_char = str(pred_label)
+
+            predictions.append(((gx, gy, gw, gh), pred_char, confidence))
+
+        return predictions
+
+    def _group_strokes(self, paths, merge_threshold=80):
+        """
+        將筆畫依空間鄰近性合併成字元群組，書寫順序由第一筆決定。
+        回傳 [(merged_bbox, [path_indices]), ...]
+        """
+        def path_bbox(path):
+            if not path:
+                return (0, 0, 1, 1)
+            xs = [p[0] for p in path]
+            ys = [p[1] for p in path]
+            x1, y1 = min(xs), min(ys)
+            x2, y2 = max(xs), max(ys)
+            return (x1, y1, max(1, x2 - x1), max(1, y2 - y1))
+
+        bboxes = [path_bbox(p) for p in paths]
+        # groups: list of [bbox_list, [path_indices]]
+        groups = []
+
+        for i, (x, y, w, h) in enumerate(bboxes):
+            cx, cy = x + w // 2, y + h // 2
+            assigned = False
+
+            for j in range(len(groups)):
+                gx, gy, gw, gh = groups[j][0]
+                # 如果筆畫中心落在群組 bbox 擴展後的範圍內 → 合併
+                if (gx - merge_threshold <= cx <= gx + gw + merge_threshold and
+                        gy - merge_threshold <= cy <= gy + gh + merge_threshold):
+                    nx1 = min(x, gx)
+                    ny1 = min(y, gy)
+                    nx2 = max(x + w, gx + gw)
+                    ny2 = max(y + h, gy + gh)
+                    groups[j][0] = (nx1, ny1, nx2 - nx1, ny2 - ny1)
+                    groups[j][1].append(i)
+                    assigned = True
+                    break
+
+            if not assigned:
+                groups.append([(x, y, w, h), [i]])
+
+        return groups

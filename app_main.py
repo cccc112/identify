@@ -476,8 +476,12 @@ def main():
         # ── 辨識函式 (閉包) ───────────────────────────────
         def _do_recognize():
             nonlocal recognized_text, ar_answer, last_recog_boxes, recog_box_expire, last_draw_time
-            preds = model_mgr.predict_canvas_content(
-                canvas.drawing_layer, mode=mode_name)
+            # 使用書寫順序辨識：按筆畫先後分組，不是按 x 座標排序
+            preds = model_mgr.predict_from_paths(
+                canvas.paths,
+                canvas_w=W, canvas_h=H,
+                line_thickness=canvas.line_thickness,
+                mode=mode_name)
             new_chars = ""
             last_recog_boxes = []
             for box, char, conf in preds:
