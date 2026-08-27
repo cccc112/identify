@@ -132,3 +132,26 @@ class CanvasManager:
 
         return int(cx), int(cy), int(mean_r)
 
+    def undo_last_stroke(self):
+        """撤銷最後一筆畫，重新繪製所有保留的筆畫。回傳 True 表示有撤銷。"""
+        if not self.paths:
+            return False
+        self.paths.pop()
+        # 重新繪製
+        self.drawing_layer = np.zeros((self.height, self.width, 3), dtype=np.uint8)
+        for path in self.paths:
+            if len(path) > 1:
+                for i in range(1, len(path)):
+                    cv2.line(self.drawing_layer, path[i - 1], path[i],
+                             (255, 255, 255), self.line_thickness, cv2.LINE_AA)
+                    cv2.circle(self.drawing_layer, path[i],
+                               self.line_thickness // 2, (255, 255, 255), -1, cv2.LINE_AA)
+            elif len(path) == 1:
+                cv2.circle(self.drawing_layer, path[0],
+                           self.line_thickness // 2 + 1, (255, 255, 255), -1, cv2.LINE_AA)
+        return True
+
+    @property
+    def stroke_count(self):
+        """目前已完成的筆畫數量"""
+        return len(self.paths)

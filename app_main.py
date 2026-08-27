@@ -26,7 +26,7 @@ from core.gesture_solver import GestureStateMachine, get_palm_center, safe_math_
 #  常數設定
 # ─────────────────────────────────────────────────────────────────
 W, H = 640, 480
-MODES        = ["digit", "letter", "symbol", "magic"]
+MODES        = ["digit", "letter", "symbol", "magic", "art"]
 MIN_BLOOM_RADIUS = 50   # 圓形半徑必須 > 此值才觸發 NeuralBloom
 PALETTES     = [
     ("Gold",   (50, 200, 255)),   # 橙金
@@ -143,9 +143,12 @@ def draw_ui(img, mode, palette_idx, gesture_name,
         glass_rect(img, rect, bg=bg)
 
     ink_name = PALETTES[palette_idx][0]
-    # Magic 模式用特別的紫色高亮提示
-    mode_color = (200, 160, 255) if mode == 'magic' else (160, 255, 180)
-    mode_label = f"✦ MAGIC" if mode == 'magic' else f"Mode: {mode.upper()}"
+    if mode == 'magic':
+        mode_color, mode_label = (200, 160, 255), '✦ MAGIC'
+    elif mode == 'art':
+        mode_color, mode_label = (255, 200, 120), '🎨 ART'
+    else:
+        mode_color, mode_label = (160, 255, 180), f'Mode: {mode.upper()}'
     label(img, mode_label,            btn_mode[0]+10,  btn_mode[1]+32,  color=mode_color)
     label(img, f"Ink: {ink_name}",    btn_ink[0]+10,   btn_ink[1]+32,   color=(160, 255, 220))
     label(img, "< Undo",               btn_back[0]+14,  btn_back[1]+32,  color=(190, 190, 255))
@@ -157,11 +160,14 @@ def draw_ui(img, mode, palette_idx, gesture_name,
         'hover':     (200, 200,  60),
         'palm_open': (60,  160, 255),
         'rock':      (60,   60, 255),
+        'fist':      (255, 200,  60),
+        'thumb_up':  (255, 180, 100),
     }
     gc = gesture_colors.get(gesture_name, (160, 160, 160))
     gesture_icons = {
         'draw': '✏ DRAW', 'hover': '🖱 HOVER',
         'palm_open': '✋ MAGIC', 'rock': '🤘 CAST',
+        'fist': '✊ SUBMIT', 'thumb_up': '👍 UNDO',
     }
     gi = gesture_icons.get(gesture_name, '· ·  ·')
     glass_rect(img, (PAD, H - 110, 170, H - PAD - 90), alpha=0.4, bg=(20, 20, 20))
@@ -309,13 +315,35 @@ def main():
                 recognized_text = ""
                 canvas.notify_tracking_lost()
 
+            elif gesture_name == 'thumb_up' and not fist_triggered:
+                # ── 豎大拇指 → 撤銷最後一筆 ──────────────────
+                fist_triggered = True   # 用同一個 flag 防重複觸發
+                canvas.end_stroke()
+                canvas.undo_last_stroke()
+
             elif gesture_name == 'fist' and not fist_triggered:
-                # ── 握拳 → 立即辨識（手動觸發）──────────────
                 fist_triggered = True
                 canvas.end_stroke()
                 canvas.notify_tracking_lost()
-                # 設置戇 flag，在後面 _do_recognize 定義後再執行
-                _fist_submit = True
+                if mode_name == 'art':
+                    # ── Art 模式：握拳 → 儲存畫布為 PNG ──────
+                    _fist_submit = False
+                    from datetime import datetime
+                    import os
+                    save_dir = "C:/hand/saved_art"
+                    os.makedirs(save_dir, exist_ok=True)
+                    fname = f"{save_dir}/art_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+                    # 將彩色墨水版疊加後再存
+                    save_img = np.zeros_like(canvas.drawing_layer)
+                    wm = cv2.inRange(canvas.drawing_layer, (200,200,200), (255,255,255))
+                    save_img[wm > 0] = ink_bgr
+                    cv2.imwrite(fname, save_img)
+                    # 短暫提示
+                    last_recog_boxes = [(-1, -1, -1, -1, f"Saved! {os.path.basename(fname)}")]
+                    recog_box_expire = curr_time + 2.5
+                else:
+                    # ── 其他模式：握拳 → 立即辨識 ─────────────
+                    _fist_submit = True
 
             elif gesture_name == 'draw':
                 # ── 確認進入畫圖模式 ──────────────────────

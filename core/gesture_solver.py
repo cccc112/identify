@@ -77,8 +77,11 @@ def _raw_gesture(lm, frame_w, frame_h):
     if idx_up and dist > 40:
         return 'draw_intent'
 
-    # 四指全收（握拳）→ 手動觸發辨識
+    # 四指全收（握拳 or 豎大拇指）
     if not idx_up and not mid_up and not rng_up and not pnk_up:
+        # 大拇指指尖明顯高於掌骨關節 → 豎大拇指（撤銷）
+        if (lm[2].y - lm[4].y) > 0.08:
+            return 'thumb_up'
         return 'fist'
 
     # 其餘 → 懸浮
@@ -104,7 +107,8 @@ class GestureStateMachine:
         'hover':     3,
         'palm_open': 4,
         'rock':      3,
-        'fist':      5,   # 握拳約 167ms，確認後觸發立即辨識
+        'fist':      5,
+        'thumb_up':  5,   # 豎大拇指約 167ms → 撤銷最後一筆
     }
 
     RAW_TO_STATE = {
@@ -113,6 +117,7 @@ class GestureStateMachine:
         'palm_open':   'palm_open',
         'rock':        'rock',
         'fist':        'fist',
+        'thumb_up':    'thumb_up',
     }
 
     def __init__(self):
