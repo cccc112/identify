@@ -191,7 +191,7 @@ def is_in(pt, rect):
 #  主 UI 繪製（Material You / Pixel 風格）
 # ─────────────────────────────────────────────────────────────────
 
-def draw_ui(img, mode, palette_idx, gesture_name,
+def draw_ui(img, mode, palette_idx, thickness_idx, gesture_name,
             text, hover_pt, last_btn, hover_prog, ar_ans=None):
     """
     Material You 風格 UI。
@@ -201,11 +201,11 @@ def draw_ui(img, mode, palette_idx, gesture_name,
     BTN_H = 44   # pill 高度
 
     # ── 頂部 pill 按鈕列 ─────────────────────────────────
-    # 模式按鈕（寬一點，顯示完整標籤）
-    btn_mode  = (PAD,       PAD, 165,      PAD + BTN_H)
-    btn_ink   = (172,       PAD, 307,      PAD + BTN_H)
-    btn_back  = (W - 200,  PAD, W - 108,  PAD + BTN_H)
-    btn_clear = (W - 100,  PAD, W - PAD,  PAD + BTN_H)
+    btn_mode  = (PAD,       PAD, 155,      PAD + BTN_H)
+    btn_ink   = (162,       PAD, 280,      PAD + BTN_H)
+    btn_size  = (287,       PAD, 375,      PAD + BTN_H)
+    btn_back  = (W - 195,   PAD, W - 105,  PAD + BTN_H)
+    btn_clear = (W - 98,    PAD, W - PAD,  PAD + BTN_H)
 
     mode_bg, mode_col = MODE_COLORS.get(mode, (M3['surface'], M3['primary']))
     ink_bgr_color     = PALETTES[palette_idx][1]  # 取得目前墨水色
@@ -213,11 +213,13 @@ def draw_ui(img, mode, palette_idx, gesture_name,
     # 各按鈕 tonal surface
     pill(img, btn_mode,  bg=mode_bg,       alpha=0.70, border=mode_col)
     pill(img, btn_ink,   bg=M3['surface'], alpha=0.65, border=ink_bgr_color)
+    pill(img, btn_size,  bg=M3['surface'], alpha=0.65, border=M3['secondary'])
     pill(img, btn_back,  bg=(35, 35, 55),  alpha=0.65, border=M3['secondary'])
     pill(img, btn_clear, bg=(45, 25, 25),  alpha=0.65, border=M3['error'])
 
     # 按鈕文字
     ink_name = PALETTES[palette_idx][0]
+    thick_val = THICKNESSES[thickness_idx]
     if mode == 'magic':
         mode_label = '  MAGIC'
     elif mode == 'art':
@@ -227,6 +229,7 @@ def draw_ui(img, mode, palette_idx, gesture_name,
 
     label(img, mode_label,        btn_mode[0]+4,  btn_mode[1]+28,  color=mode_col,        scale=0.52)
     label(img, f'  {ink_name}',   btn_ink[0]+4,   btn_ink[1]+28,   color=ink_bgr_color,   scale=0.52)
+    label(img, f'  {thick_val}px',btn_size[0]+2,  btn_size[1]+28,  color=M3['secondary'], scale=0.48)
     label(img, '  Undo',          btn_back[0]+4,  btn_back[1]+28,  color=M3['secondary'], scale=0.52)
     label(img, '  Clear',         btn_clear[0]+4, btn_clear[1]+28, color=M3['error'],     scale=0.52)
 
@@ -283,7 +286,7 @@ def draw_ui(img, mode, palette_idx, gesture_name,
     # ── Hover 高亮與進度弧 ───────────────────────────────
     hovered = None
     if hover_pt:
-        for rect, name in [(btn_mode, 'mode'), (btn_ink, 'ink'),
+        for rect, name in [(btn_mode, 'mode'), (btn_ink, 'ink'), (btn_size, 'size'),
                            (btn_back, 'back'), (btn_clear, 'clear')]:
             if is_in(hover_pt, rect):
                 hovered = name
@@ -611,7 +614,7 @@ def main():
             ar_answer = None
 
         hovered_btn = draw_ui(
-            disp, mode_name, palette_idx, gesture_name,
+            disp, mode_name, palette_idx, thickness_idx, gesture_name,
             recognized_text, hover_point, last_hovered_btn,
             hover_progress, ar_ans=ar_ans_display
         )
@@ -631,6 +634,9 @@ def main():
                         canvas.clear()
                     elif hovered_btn == 'ink':
                         palette_idx = (palette_idx + 1) % len(PALETTES)
+                    elif hovered_btn == 'size':
+                        thickness_idx = (thickness_idx + 1) % len(THICKNESSES)
+                        canvas.line_thickness = THICKNESSES[thickness_idx]
                     btn_cooldown     = curr_time
                     hover_start_time = curr_time
             else:
