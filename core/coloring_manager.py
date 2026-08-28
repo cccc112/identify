@@ -1,4 +1,4 @@
-﻿import cv2
+import cv2
 import numpy as np
 import os
 import glob
@@ -99,3 +99,5 @@ class ColoringManager:
             print(f'[Coloring] Loaded: {os.path.basename(f)}')
         if self._images:
             print(f'[Coloring] {len(self._images)} pages ready. Rock in Art mode to cycle.')
+            self._idx = 0
+            self.current = self._images[0][1]

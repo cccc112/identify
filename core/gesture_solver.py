@@ -73,8 +73,8 @@ def _raw_gesture(lm, frame_w, frame_h):
     if idx_up and pnk_up and not mid_up and not rng_up:
         return 'rock'
 
-    # 食指伸出且兩指距離夠大 → 畫圖意圖
-    if idx_up and dist > 40:
+    # 食指伸出且中指收起 → 畫圖意圖
+    if idx_up and not mid_up:
         return 'draw_intent'
 
     # 四指全收（握拳 or 豎大拇指）

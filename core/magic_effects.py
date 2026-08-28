@@ -271,3 +271,64 @@ class NeuralBloom:
                     white = tuple(int(255 * global_alpha) for _ in range(3))
                     cv2.circle(frame, (ex, ey), max(1, nr - 1), white, -1, cv2.LINE_AA)
 
+class AnimalSpawner:
+    """魔法模式：噴出小動物"""
+    def __init__(self):
+        self.animals = []
+        self.emojis = ['🐱', '🐶', '🐰', '🦊', '🐻', '🐼', '🐨', '🐯', '🦁', '🐮']
+        
+        # 預先渲染 emoji 圖片 (帶 Alpha)
+        from PIL import ImageFont, ImageDraw, Image
+        self.emoji_imgs = []
+        try:
+            font = ImageFont.truetype('C:/Windows/Fonts/seguiemj.ttf', 40)
+            for e in self.emojis:
+                img_pil = Image.new('RGBA', (60, 60), (0, 0, 0, 0))
+                draw = ImageDraw.Draw(img_pil)
+                draw.text((5, 5), e, font=font, embedded_color=True, fill=(255, 255, 255, 255))
+                self.emoji_imgs.append(np.array(img_pil))
+        except Exception as ex:
+            print("Failed to load emoji font:", ex)
+            
+    def spawn(self, x, y):
+        if not self.emoji_imgs:
+            return
+        self.animals.append({
+            'x': float(x), 'y': float(y),
+            'vx': random.uniform(-2, 2),
+            'vy': random.uniform(-6, -2),
+            'life': 1.0,
+            'img_idx': random.randint(0, len(self.emoji_imgs) - 1),
+            'scale': random.uniform(0.6, 1.3)
+        })
+        
+    def update_and_draw(self, frame):
+        if not self.emoji_imgs:
+            return
+        alive = []
+        h, w = frame.shape[:2]
+        for a in self.animals:
+            a['life'] -= 0.02
+            if a['life'] <= 0:
+                continue
+            a['x'] += a['vx']
+            a['y'] += a['vy']
+            a['vy'] += 0.1  # gravity
+            
+            img_rgba = self.emoji_imgs[a['img_idx']]
+            sw = int(img_rgba.shape[1] * a['scale'])
+            sh = int(img_rgba.shape[0] * a['scale'])
+            if sw > 0 and sh > 0:
+                resized = cv2.resize(img_rgba, (sw, sh))
+                cx, cy = int(a['x']), int(a['y'])
+                x1, y1 = cx - sw//2, cy - sh//2
+                x2, y2 = x1 + sw, y1 + sh
+                if 0 <= x1 and x2 < w and 0 <= y1 and y2 < h:
+                    alpha = (resized[:, :, 3] / 255.0) * a['life']
+                    for c in range(3):
+                        frame[y1:y2, x1:x2, c] = (
+                            frame[y1:y2, x1:x2, c] * (1 - alpha) +
+                            resized[:, :, c] * alpha
+                        )
+            alive.append(a)
+        self.animals = alive

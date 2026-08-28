@@ -18,7 +18,7 @@ import random
 from core.hand_tracker import HandTracker
 from core.canvas import CanvasManager
 from core.model_manager import ModelManager
-from core.magic_effects import ParticleSystem, MagicMandala, NeuralBloom
+from core.magic_effects import ParticleSystem, MagicMandala, NeuralBloom, AnimalSpawner
 from core.gesture_solver import GestureStateMachine, get_palm_center, safe_math_eval
 from core.coloring_manager import ColoringManager
 
@@ -41,7 +41,7 @@ PALETTES     = [
 ]
 THICKNESSES  = [4, 7, 12, 20]    # 筆刷粗細選項
 DRAW_DIST_THRESHOLD = 40
-MIN_PIXELS          = 300
+MIN_PIXELS          = 50
 SEG_TIMEOUT         = 2.5
 
 
@@ -336,6 +336,7 @@ def main():
 
     gesture_sm   = GestureStateMachine()
     neural_bloom = NeuralBloom()
+    animals      = AnimalSpawner()
     pointer      = PointerSmoother(alpha=0.28)
     recognized_text       = ""
     ar_answer             = None
@@ -430,6 +431,7 @@ def main():
                 fist_triggered = True   # 用同一個 flag 防重複觸發
                 canvas.end_stroke()
                 canvas.undo_last_stroke()
+                _recognized_path_cnt = min(_recognized_path_cnt, len(canvas.paths))
 
             elif gesture_name == 'fist' and not fist_triggered:
                 fist_triggered = True
@@ -477,6 +479,8 @@ def main():
                         d = math.sqrt((x_idx - prev_draw_pt[0])**2 + (y_idx - prev_draw_pt[1])**2)
                         if d > 10:
                             particles.spawn(x_idx, y_idx, color=ink_bgr, count=2)
+                            if mode_name == 'magic' and random.random() < 0.15:
+                                animals.spawn(x_idx, y_idx)
                     prev_draw_pt = (x_idx, y_idx)
 
                 # 準心：實心圓 + 白色外環
@@ -536,6 +540,7 @@ def main():
         # ── 粒子更新 ──────────────────────────────────────
         particles.update_and_draw(disp)
         neural_bloom.update_and_draw(disp)
+        animals.update_and_draw(disp)
 
         # ── 填色底圖 AR 疊加 ─────────────────────────────
         if mode_name == 'art' and coloring.has_image:
@@ -627,11 +632,13 @@ def main():
                     if hovered_btn == 'clear':
                         recognized_text = ""
                         canvas.clear()
+                        _recognized_path_cnt = 0
                     elif hovered_btn == 'back':
                         recognized_text = recognized_text[:-1]
                     elif hovered_btn == 'mode':
                         mode_idx = (mode_idx + 1) % len(MODES)
                         canvas.clear()
+                        _recognized_path_cnt = 0
                     elif hovered_btn == 'ink':
                         palette_idx = (palette_idx + 1) % len(PALETTES)
                     elif hovered_btn == 'size':

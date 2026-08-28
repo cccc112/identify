@@ -45,7 +45,7 @@ class HandTracker:
         options = vision.HandLandmarkerOptions(
             base_options=base_options,
             running_mode=RunningMode.VIDEO,          # 關鍵：VIDEO 模式有跨幀追蹤
-            num_hands=max_num_hands,
+            num_hands=2,
             min_hand_detection_confidence=min_hand_detection_confidence,
             min_hand_presence_confidence=0.5,
             min_tracking_confidence=min_tracking_confidence,

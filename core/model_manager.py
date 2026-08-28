@@ -242,6 +242,10 @@ class ModelManager:
                     # top-2 是對應小寫且信心差距 < 35% → 改輸出小寫
                     if top2_char == alt and (confidence - float(pred_probs[top2_label])) < 0.35:
                         pred_char = alt
+                
+                # 強制：因為 EMNIST 常把 'a' 誤認為 'Q' 或 'q'，強制轉換以符合預期
+                if pred_char in ('Q', 'q'):
+                    pred_char = 'a'
             elif mode == "symbol" and pred_label < len(self.symbol_classes):
                 pred_char = f" {self.symbol_classes[pred_label]} "
             else:
