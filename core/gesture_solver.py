@@ -79,8 +79,12 @@ def _raw_gesture(lm, frame_w, frame_h):
 
     # 四指全收（握拳 or 豎大拇指）
     if not idx_up and not mid_up and not rng_up and not pnk_up:
-        # 大拇指指尖明顯高於掌骨關節 → 豎大拇指（撤銷）
-        if (lm[2].y - lm[4].y) > 0.08:
+        # 豎大拇指：
+        #   lm[4] 指尖 y < lm[3] 指 IP 關節 y（朝上）
+        #   AND 指尖比掌骨關節 lm[2] 高出至少 5% 畫面高度
+        thumb_tip_above_ip  = lm[4].y < lm[3].y
+        thumb_tip_above_mcp = (lm[2].y - lm[4].y) > 0.05
+        if thumb_tip_above_ip and thumb_tip_above_mcp:
             return 'thumb_up'
         return 'fist'
 
@@ -108,7 +112,7 @@ class GestureStateMachine:
         'palm_open': 4,
         'rock':      3,
         'fist':      5,
-        'thumb_up':  5,   # 豎大拇指約 167ms → 撤銷最後一筆
+        'thumb_up':  4,   # 豎大拇指約 133ms，比握拳快一點好觸發
     }
 
     RAW_TO_STATE = {

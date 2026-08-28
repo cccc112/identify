@@ -228,6 +228,20 @@ class ModelManager:
 
             if mode == "letter" and pred_label < len(self.letter_classes):
                 pred_char = self.letter_classes[pred_label]
+                # EMNIST 常見視覺混淆對後處理
+                CONFUSION_PAIRS = {
+                    'Q': 'q', 'O': 'o', 'P': 'p', 'C': 'c',
+                    'S': 's', 'U': 'u', 'V': 'v', 'W': 'w',
+                    'X': 'x', 'Z': 'z',
+                }
+                if pred_char in CONFUSION_PAIRS:
+                    top2_label = int(np.argsort(pred_probs)[-2])
+                    top2_char  = (self.letter_classes[top2_label]
+                                  if top2_label < len(self.letter_classes) else None)
+                    alt = CONFUSION_PAIRS[pred_char]
+                    # top-2 是對應小寫且信心差距 < 35% → 改輸出小寫
+                    if top2_char == alt and (confidence - float(pred_probs[top2_label])) < 0.35:
+                        pred_char = alt
             elif mode == "symbol" and pred_label < len(self.symbol_classes):
                 pred_char = f" {self.symbol_classes[pred_label]} "
             else:

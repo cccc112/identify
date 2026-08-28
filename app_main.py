@@ -69,29 +69,29 @@ class PointerSmoother:
 #  Material You 色彩 Token (BGR)
 # ─────────────────────────────────────────────────────────────────
 M3 = {
-    'bg':            (14,  13,  16),   # #100D0E  近黑背景
-    'surface':       (32,  29,  34),   # #22201E  卡片底色
-    'surface_hi':    (52,  48,  56),   # #383038  懸浮高亮
-    'primary':       (250, 195, 168),  # #A8C3FA  主色（藍，BGR 反轉）
-    'primary_dim':   (140, 110,  95),  # 主色暗版
-    'secondary':     (208, 198, 197),  # #C5C6D0  次要色
-    'tertiary':      (120, 200, 255),  # #FFC878  第三色（暖橙，BGR）
-    'on_surface':    (226, 226, 230),  # #E2E2E6  主要文字
-    'on_surface_lo': (150, 148, 155),  # 次要文字
-    'error':         ( 80,  80, 200),  # 紅色
-    'success':       (120, 255,  80),  # 綠色
+    'bg':            (14,  13,  16),   # 近黑背景
+    'surface':       (38,  34,  42),   # 卡片底色
+    'surface_hi':    (70,  64,  80),   # 懸浮高亮
+    'primary':       (255, 177, 130),  # 鮮藍 #82B1FF (BGR)
+    'primary_dim':   (160, 100,  70),
+    'secondary':     (220, 215, 225),  # 淺灰白
+    'tertiary':      ( 64, 171, 255),  # 鮮橙 #FFAB40 (BGR)
+    'on_surface':    (245, 245, 250),  # 幾乎純白文字
+    'on_surface_lo': (170, 165, 180),  # 次要文字
+    'error':         ( 80,  80, 255),  # 鮮紅 #FF5050 (BGR)
+    'success':       ( 80, 230, 100),  # 鮮綠 #64E650 (BGR)
     # 模式專屬
-    'magic_col':     (240, 150, 200),  # 魔法紫
-    'art_col':       (120, 200, 255),  # 藝術暖橙
+    'magic_col':     (255,  80, 200),  # 鮮紫 #C850FF (BGR)
+    'art_col':       ( 40, 200, 255),  # 鮮橙黃 (BGR)
 }
 
-# 各模式的 tonal surface 色
+# 各模式的 tonal surface 色（也配合提高飽和度）
 MODE_COLORS = {
-    'digit':  ((40, 35, 50),   M3['primary']),
-    'letter': ((35, 50, 40),   M3['success']),
-    'symbol': ((50, 40, 35),   M3['tertiary']),
-    'magic':  ((50, 30, 60),   M3['magic_col']),
-    'art':    ((30, 50, 55),   M3['art_col']),
+    'digit':  ((55, 45, 70),   M3['primary']),
+    'letter': ((40, 65, 45),   M3['success']),
+    'symbol': ((55, 50, 38),   M3['tertiary']),
+    'magic':  ((65, 35, 75),   M3['magic_col']),
+    'art':    ((35, 60, 65),   M3['art_col']),
 }
 
 # ─────────────────────────────────────────────────────────────────
@@ -438,14 +438,23 @@ def main():
                 # ── 確認進入畫圖模式 ──────────────────────
                 is_drawing     = True
                 rock_triggered = False
-                canvas.add_point(x_idx, y_idx)
                 last_draw_time = curr_time
 
+                # ── 跳躍過濾：單幀位移超過 60px → 視為雜訊（其他手指干擾）
+                _spike = False
                 if prev_draw_pt:
-                    d = math.sqrt((x_idx - prev_draw_pt[0]) ** 2 + (y_idx - prev_draw_pt[1]) ** 2)
-                    if d > 10:
-                        particles.spawn(x_idx, y_idx, color=ink_bgr, count=2)
-                prev_draw_pt = (x_idx, y_idx)
+                    _dx = x_idx - prev_draw_pt[0]
+                    _dy = y_idx - prev_draw_pt[1]
+                    if math.sqrt(_dx*_dx + _dy*_dy) > 60:
+                        _spike = True
+
+                if not _spike:
+                    canvas.add_point(x_idx, y_idx)
+                    if prev_draw_pt:
+                        d = math.sqrt((x_idx - prev_draw_pt[0])**2 + (y_idx - prev_draw_pt[1])**2)
+                        if d > 10:
+                            particles.spawn(x_idx, y_idx, color=ink_bgr, count=2)
+                    prev_draw_pt = (x_idx, y_idx)
 
                 # 準心：實心圓 + 白色外環
                 cv2.circle(disp, (x_idx, y_idx), 9,  ink_bgr,        -1, cv2.LINE_AA)
