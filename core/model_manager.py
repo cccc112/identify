@@ -251,12 +251,15 @@ class ModelManager:
 
         return predictions
 
-    def _group_strokes(self, paths, gap_threshold=30):
+    def _group_strokes(self, paths, gap_threshold=40):
         """
-        將筆畫依空間鄰近性合併成字元群組，書寫順序由第一筆決定。
-        gap_threshold: 兩個 bbox 邊緣間最大允許間距（像素）。
-        用邊緣間距而非中心距離，避免大字元把遠處的字也吸進來。
-        回傳 [(merged_bbox, [path_indices]), ...]
+        把連續書寫的相近筆畫合併成同一字元群組。
+
+        規則：筆畫 i 只能和「最後一個加入的筆畫是 i-1」的群組合併。
+        → 多筆畫字（4, i, t, f…）相鄰連續寫 → 正確合併
+        → 寫完一個字之後再寫另一個字 → 一定分成不同群組，不管空間多近
+
+        gap_threshold: bbox 邊緣間距上限（像素）
         """
         def path_bbox(path):
             if not path:
@@ -268,25 +271,29 @@ class ModelManager:
             return (x1, y1, max(1, x2 - x1), max(1, y2 - y1))
 
         bboxes = [path_bbox(p) for p in paths]
-        groups = []   # list of [[bbox], [path_indices]]
+        groups = []   # list of [bbox, [path_indices]]
 
         for i, (x, y, w, h) in enumerate(bboxes):
             assigned = False
 
-            for j in range(len(groups)):
-                gx, gy, gw, gh = groups[j][0]
-                # bbox 邊緣間距 (不重疊時才有值，重疊時為 0)
-                gap_x = max(0, x - (gx + gw)) if x > gx else max(0, gx - (x + w))
-                gap_y = max(0, y - (gy + gh)) if y > gy else max(0, gy - (y + h))
-                if gap_x < gap_threshold and gap_y < gap_threshold:
-                    nx1 = min(x, gx)
-                    ny1 = min(y, gy)
-                    nx2 = max(x + w, gx + gw)
-                    ny2 = max(y + h, gy + gh)
-                    groups[j][0] = (nx1, ny1, nx2 - nx1, ny2 - ny1)
-                    groups[j][1].append(i)
-                    assigned = True
-                    break
+            # 只看最近一個群組：其最後加入的筆畫必須剛好是 i-1
+            if groups:
+                last_group   = groups[-1]
+                last_in_grp  = last_group[1][-1]
+
+                if last_in_grp == i - 1:           # ← 連續筆畫條件
+                    gx, gy, gw, gh = last_group[0]
+                    gap_x = (max(0, x - (gx + gw))
+                              if x > gx else max(0, gx - (x + w)))
+                    gap_y = (max(0, y - (gy + gh))
+                              if y > gy else max(0, gy - (y + h)))
+
+                    if gap_x < gap_threshold and gap_y < gap_threshold:
+                        nx1 = min(x, gx);      ny1 = min(y, gy)
+                        nx2 = max(x + w, gx + gw); ny2 = max(y + h, gy + gh)
+                        last_group[0] = (nx1, ny1, nx2 - nx1, ny2 - ny1)
+                        last_group[1].append(i)
+                        assigned = True
 
             if not assigned:
                 groups.append([(x, y, w, h), [i]])

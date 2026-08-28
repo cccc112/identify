@@ -565,8 +565,12 @@ def main():
         def _do_recognize():
             nonlocal recognized_text, ar_answer, last_recog_boxes
             nonlocal recog_box_expire, last_draw_time, _recognized_path_cnt
+            # 只辨識「尚未辨識」的新筆畫
+            new_paths = canvas.paths[_recognized_path_cnt:]
+            if not new_paths:
+                return
             preds = model_mgr.predict_from_paths(
-                canvas.paths,
+                new_paths,
                 canvas_w=W, canvas_h=H,
                 line_thickness=canvas.line_thickness,
                 mode=mode_name)
