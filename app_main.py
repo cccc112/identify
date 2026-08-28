@@ -20,6 +20,7 @@ from core.canvas import CanvasManager
 from core.model_manager import ModelManager
 from core.magic_effects import ParticleSystem, MagicMandala, NeuralBloom
 from core.gesture_solver import GestureStateMachine, get_palm_center, safe_math_eval
+from core.coloring_manager import ColoringManager
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -27,16 +28,21 @@ from core.gesture_solver import GestureStateMachine, get_palm_center, safe_math_
 # ─────────────────────────────────────────────────────────────────
 W, H = 640, 480
 MODES        = ["digit", "letter", "symbol", "magic", "art"]
-MIN_BLOOM_RADIUS = 50   # 圓形半徑必須 > 此值才觸發 NeuralBloom
+MIN_BLOOM_RADIUS = 50
 PALETTES     = [
-    ("Gold",   (50, 200, 255)),   # 橙金
-    ("Cyan",   (255, 220,  80)),  # 冰藍
-    ("Violet", (255,  80, 220)),  # 紫魔
-    ("Red",    (60,  60,  255)),  # 赤紅
+    ("Gold",    ( 50, 200, 255)),  # 橙金
+    ("Cyan",    (255, 220,  80)),  # 冰藍
+    ("Violet",  (255,  80, 220)),  # 紫魔
+    ("Red",     ( 60,  60, 255)),  # 赤紅
+    ("Green",   ( 50, 220,  80)),  # 翠綠
+    ("Pink",    (180,  80, 255)),  # 粉紅
+    ("White",   (240, 240, 240)),  # 白
+    ("Sky",     (255, 190,  80)),  # 天藍
 ]
-DRAW_DIST_THRESHOLD = 40   # 食指與中指距離 > 此值 → 畫圖
-MIN_PIXELS          = 300  # 畫布上至少要有這麼多白色像素才觸發辨識
-SEG_TIMEOUT         = 2.5  # 拉長到 2.5 秒，讓多筆畫的字有足夠時間完成
+THICKNESSES  = [4, 7, 12, 20]    # 筆刷粗細選項
+DRAW_DIST_THRESHOLD = 40
+MIN_PIXELS          = 300
+SEG_TIMEOUT         = 2.5
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -312,23 +318,27 @@ def main():
     cap.set(cv2.CAP_PROP_FPS, 30)
 
     tracker   = HandTracker(
-        min_hand_detection_confidence=0.5,  # 不要太嚴，避免漏偵測
+        min_hand_detection_confidence=0.5,
         min_tracking_confidence=0.45
     )
     canvas    = CanvasManager(width=W, height=H, line_thickness=7)
     model_mgr = ModelManager()
     particles = ParticleSystem()
     mandala   = MagicMandala()
+    coloring  = ColoringManager(canvas_w=W, canvas_h=H)
 
-    mode_idx    = 0
-    palette_idx = 0
+    mode_idx       = 0
+    palette_idx    = 0
+    thickness_idx  = 1   # 預設 index=1 → 7px
 
     gesture_sm   = GestureStateMachine()
     neural_bloom = NeuralBloom()
-    pointer      = PointerSmoother(alpha=0.28)  # 上游座標平滑器
-    recognized_text = ""
-    ar_answer       = None   # (str, expire_time)
-    last_draw_time  = time.time()
+    pointer      = PointerSmoother(alpha=0.28)
+    recognized_text       = ""
+    ar_answer             = None
+    last_draw_time        = time.time()
+    _recognized_path_cnt  = 0   # 上次辨識後 canvas.paths 的數量
+    #   → 只有新筆畫加入後才重新觸發辨識
 
     btn_cooldown     = 0.0
     last_hovered_btn = None
@@ -336,13 +346,13 @@ def main():
 
     rock_triggered    = False
     fist_triggered    = False
-    _fist_submit      = False   # 握拳觸發 flag
-    last_recog_boxes  = []   # [(x,y,w,h,char)] 顯示辨識框用
-    recog_box_expire  = 0.0  # 辨識框顯示到這個時間點
+    _fist_submit      = False
+    last_recog_boxes  = []
+    recog_box_expire  = 0.0
     prev_draw_pt      = None
     prev_time         = time.time()
     gesture_name      = 'hover'
-    gesture_progress  = 0.0   # 0~1：目前手勢的確認進度（用來顯示給使用者看）
+    gesture_progress  = 0.0
 
     while cap.isOpened():
         ok, frame = cap.read()
@@ -394,13 +404,23 @@ def main():
 
             elif gesture_name == 'rock' and not rock_triggered:
                 rock_triggered = True
-                for _ in range(80):
-                    particles.spawn(
-                        random.randint(80, 560), random.randint(60, 420),
-                        color=ink_bgr, count=1)
-                canvas.clear()
-                recognized_text = ""
-                canvas.notify_tracking_lost()
+                if mode_name == 'art':
+                    # Art 模式：搖滾 → 切換填色底圖
+                    name = coloring.next_image()
+                    canvas.clear()
+                    _recognized_path_cnt = 0
+                    last_recog_boxes = [(-1, -1, -1, -1, f"Image: {name}")]
+                    recog_box_expire = curr_time + 2.0
+                else:
+                    # 其他模式：搖滾 → 粒子爆炸 + 清空畫布+文字
+                    for _ in range(80):
+                        particles.spawn(
+                            random.randint(80, 560), random.randint(60, 420),
+                            color=ink_bgr, count=1)
+                    canvas.clear()
+                    recognized_text = ""
+                    _recognized_path_cnt = 0
+                    canvas.notify_tracking_lost()
 
             elif gesture_name == 'thumb_up' and not fist_triggered:
                 # ── 豎大拇指 → 撤銷最後一筆 ──────────────────
@@ -514,6 +534,66 @@ def main():
         particles.update_and_draw(disp)
         neural_bloom.update_and_draw(disp)
 
+        # ── 填色底圖 AR 疊加 ─────────────────────────────
+        if mode_name == 'art' and coloring.has_image:
+            coloring.blend_onto(disp)
+
+        # ── 自動辨識倒數進度條 ────────────────────────────
+        pixel_count  = canvas.get_pixel_count()
+        time_elapsed = curr_time - last_draw_time
+        # 只有「有新筆畫加入」且「非 magic/art」才顯示倒數
+        _new_strokes = len(canvas.paths) > _recognized_path_cnt
+        has_enough   = (_new_strokes and canvas.has_content()
+                        and pixel_count >= MIN_PIXELS
+                        and not is_drawing
+                        and mode_name not in ('magic', 'art'))
+
+        if has_enough:
+            seg_progress = min(1.0, time_elapsed / SEG_TIMEOUT)
+            bar_w = int((W - 30) * seg_progress)
+            bar_y = H - 93
+            cv2.line(disp, (15, bar_y), (15 + bar_w, bar_y), M3['success'], 3, cv2.LINE_AA)
+            hint = f"Fist=submit  Thumb=undo  |  Auto in {max(0, SEG_TIMEOUT - time_elapsed):.1f}s"
+            label(disp, hint, 20, bar_y - 6, scale=0.38, color=M3['success'])
+        elif mode_name == 'art' and canvas.has_content():
+            bar_y = H - 93
+            img_label = f"[{coloring.current_name}]  " if coloring.has_image else ""
+            hint = f"{img_label}Strokes:{canvas.stroke_count}  Fist=save  Thumb=undo  Rock=next img"
+            label(disp, hint, 20, bar_y - 6, scale=0.38, color=M3['art_col'])
+
+        # ── 辨識函式 (閉包) ───────────────────────────────
+        def _do_recognize():
+            nonlocal recognized_text, ar_answer, last_recog_boxes
+            nonlocal recog_box_expire, last_draw_time, _recognized_path_cnt
+            preds = model_mgr.predict_from_paths(
+                canvas.paths,
+                canvas_w=W, canvas_h=H,
+                line_thickness=canvas.line_thickness,
+                mode=mode_name)
+            new_chars = ""
+            last_recog_boxes = []
+            for box, char, conf in preds:
+                new_chars += char
+                last_recog_boxes.append((box[0], box[1], box[2], box[3], char))
+            if new_chars:
+                recognized_text  += new_chars
+                recog_box_expire  = curr_time + 2.0
+                _recognized_path_cnt = len(canvas.paths)  # 更新已辨識筆畫數
+                if '=' in recognized_text:
+                    expr = recognized_text.rsplit('=', 1)[0]
+                    ans, ok = safe_math_eval(expr)
+                    if ok:
+                        ar_answer = (ans, curr_time + 4.0)
+            # !! 不再自動清空畫布 !! 等使用者主動搖滾或按 Clear
+
+        # Magic/Art 模式不做辨識
+        if has_enough and time_elapsed > SEG_TIMEOUT:
+            _do_recognize()
+        elif _fist_submit:
+            _fist_submit = False
+            if canvas.has_content() and canvas.get_pixel_count() >= MIN_PIXELS:
+                _do_recognize()
+
         # ── Hover 進度計算 ────────────────────────────────
         hover_progress = 0.0
         if last_hovered_btn and not is_drawing:
@@ -555,54 +635,7 @@ def main():
         else:
             last_hovered_btn = None
 
-        # ── 自動辨識倒數進度條 ────────────────────────────
-        pixel_count  = canvas.get_pixel_count()
-        time_elapsed = curr_time - last_draw_time
-        has_enough   = (canvas.has_content() and pixel_count >= MIN_PIXELS
-                        and not is_drawing and mode_name != 'magic')
 
-        if has_enough:
-            seg_progress = min(1.0, time_elapsed / SEG_TIMEOUT)
-            # 在底部文字框上方顯示一條很細的進度條
-            bar_w = int((W - 30) * seg_progress)
-            bar_y = H - 93
-            cv2.line(disp, (15, bar_y), (15 + bar_w, bar_y), (60, 255, 120), 3, cv2.LINE_AA)
-            # 提示文字
-            hint = f"✓ Fist to submit  |  Auto in {max(0, SEG_TIMEOUT - time_elapsed):.1f}s"
-            label(disp, hint, 20, bar_y - 6, scale=0.42, color=(120, 255, 160))
-
-        # ── 辨識函式 (閉包) ───────────────────────────────
-        def _do_recognize():
-            nonlocal recognized_text, ar_answer, last_recog_boxes, recog_box_expire, last_draw_time
-            # 使用書寫順序辨識：按筆畫先後分組，不是按 x 座標排序
-            preds = model_mgr.predict_from_paths(
-                canvas.paths,
-                canvas_w=W, canvas_h=H,
-                line_thickness=canvas.line_thickness,
-                mode=mode_name)
-            new_chars = ""
-            last_recog_boxes = []
-            for box, char, conf in preds:
-                new_chars += char
-                last_recog_boxes.append((box[0], box[1], box[2], box[3], char))
-            if new_chars:
-                recognized_text += new_chars
-                recog_box_expire = curr_time + 2.0  # 顯示 2 秒
-                if '=' in recognized_text:
-                    expr = recognized_text.rsplit('=', 1)[0]
-                    ans, ok = safe_math_eval(expr)
-                    if ok:
-                        ar_answer = (ans, curr_time + 4.0)
-            canvas.clear()
-            last_draw_time = curr_time  # 重置計時
-
-        # Magic 模式不做辨識
-        if has_enough and time_elapsed > SEG_TIMEOUT:
-            _do_recognize()
-        elif _fist_submit:
-            _fist_submit = False
-            if canvas.has_content() and canvas.get_pixel_count() >= MIN_PIXELS:
-                _do_recognize()
 
         # ── 辨識結果邊界框顯示 ───────────────────────────
         if curr_time < recog_box_expire:
