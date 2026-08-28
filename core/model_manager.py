@@ -247,7 +247,22 @@ class ModelManager:
                 if pred_char in ('Q', 'q'):
                     pred_char = 'a'
             elif mode == "symbol" and pred_label < len(self.symbol_classes):
-                pred_char = f" {self.symbol_classes[pred_label]} "
+                sym = self.symbol_classes[pred_label]
+                # 將英文代碼對應到實際符號
+                sym_map = {
+                    'add': '+', 'sub': '-', 'mul': '*', 'div': '/', 'eq': '=',
+                    'times': '*', 'pm': '±', 'neq': '≠', 'leq': '≤', 'geq': '≥',
+                    'infty': '∞', 'alpha': 'α', 'beta': 'β', 'gamma': 'γ',
+                    'pi': 'π', 'theta': 'θ', 'sum': '∑', 'int': '∫',
+                    'forward_slash': '/', 'ascii_124': '|',
+                    'rightarrow': '→', 'ldots': '...', 'prime': "'",
+                    'exists': '∃', 'forall': '∀', 'in': '∈', 'Delta': 'Δ',
+                    'sigma': 'σ', 'lambda': 'λ', 'mu': 'μ', 'phi': 'φ'
+                }
+                pred_char = sym_map.get(sym, sym)
+                # 基本運算符加上空白以利於計算與閱讀
+                if pred_char in ('+', '-', '*', '/', '='):
+                    pred_char = f" {pred_char} "
             else:
                 pred_char = str(pred_label)
 

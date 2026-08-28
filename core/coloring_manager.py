@@ -68,13 +68,19 @@ class ColoringManager:
     def has_image(self):
         return self.current is not None
 
-    def blend_onto(self, frame_bgr, alpha=0.90):
+    def blend_onto(self, frame_bgr, alpha=0.95):
         if self.current is None:
             return
+        # 將背景調淡（白化/霧化），降低攝影機畫面干擾
+        white_bg = np.full_like(frame_bgr, 255)
+        bg = cv2.addWeighted(frame_bgr, 0.25, white_bg, 0.75, 0)
+        
+        # 疊加黑色線稿
         mask = self.current < 128
-        overlay = frame_bgr.copy()
-        overlay[mask] = [15, 12, 15]
-        cv2.addWeighted(overlay, alpha, frame_bgr, 1 - alpha, 0, frame_bgr)
+        bg[mask] = [30, 20, 30]  # 深灰色線條
+        
+        # 蓋回原本的畫面中
+        np.copyto(frame_bgr, bg)
 
     def get_outline_bgr(self):
         if self.current is None:

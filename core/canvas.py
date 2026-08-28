@@ -63,43 +63,17 @@ class CanvasManager:
 
         self.points = []
 
-    def _trim_tail(self, pts, tail_len=5, angle_threshold=90):
+    def _trim_tail(self, pts):
         """
-        裁掉筆畫尾端的抖動點。
-        原理：計算最後 tail_len 個點與主方向的夾角，
-              若偏轉超過 angle_threshold 度就截斷。
+        裁掉筆畫尾端的抖動點（手抬起時的「小尾巴」）。
+        直接砍掉最後 3 幀的座標點（若筆畫夠長），
+        這比算角度更有效解決提筆時的倒勾。
         """
-        if len(pts) < tail_len + 2:
-            return list(pts)
-
-        pts = list(pts)
-        # 主方向：用倒數 (tail_len+1) 到倒數 (tail_len) 這一段
-        ref_idx = max(0, len(pts) - tail_len - 2)
-        ref_end = len(pts) - tail_len - 1
-        dx_ref = pts[ref_end][0] - pts[ref_idx][0]
-        dy_ref = pts[ref_end][1] - pts[ref_idx][1]
-        if dx_ref == 0 and dy_ref == 0:
-            return pts
-
-        cut_at = len(pts)
-        for k in range(len(pts) - tail_len, len(pts)):
-            dx = pts[k][0] - pts[k - 1][0]
-            dy = pts[k][1] - pts[k - 1][1]
-            if dx == 0 and dy == 0:
-                continue
-            # 用 cross product 計算夾角
-            dot   = dx * dx_ref + dy * dy_ref
-            mag   = math.sqrt(dx*dx + dy*dy) * math.sqrt(dx_ref*dx_ref + dy_ref*dy_ref)
-            if mag == 0:
-                continue
-            cosA  = max(-1.0, min(1.0, dot / mag))
-            angle = math.degrees(math.acos(cosA))
-            if angle > angle_threshold:
-                cut_at = k
-                break
-
-        return pts[:cut_at] if cut_at > 2 else pts
-
+        if len(pts) > 10:
+            return list(pts[:-3])
+        elif len(pts) > 5:
+            return list(pts[:-1])
+        return list(pts)
     def clear(self):
         self.drawing_layer = np.zeros((self.height, self.width, 3), dtype=np.uint8)
         self.points = []
