@@ -447,9 +447,6 @@ def main():
             # 只在 TYPE 模式啟用並顯示視線游標，避免干擾手部畫畫
             if MODES[mode_idx] == 'type':
                 gaze_pt = (gx, gy)
-                # 畫出視線游標 (科幻光圈)
-                cv2.circle(disp, gaze_pt, 12, (255, 150, 0), 2, cv2.LINE_AA)
-                cv2.circle(disp, gaze_pt, 4, (0, 255, 255), -1, cv2.LINE_AA)
 
         curr_time   = time.time()
         mode_name   = MODES[mode_idx]
@@ -810,6 +807,12 @@ def main():
                         active_tool = 'bucket' if active_tool == 'brush' else 'brush'
                     elif hovered_btn == 'track':
                         gaze_solver.use_eye_only = not gaze_solver.use_eye_only
+                        if gaze_solver.use_eye_only and mode_name != 'type':
+                            try:
+                                mode_idx = MODES.index('type')
+                            except ValueError:
+                                pass
+                            canvas.clear()
                     elif hovered_btn == 'save':
                         if mode_name == 'train':
                             import subprocess
@@ -884,7 +887,7 @@ def main():
 
         # ── 繪製 TYPE 模式的視線鍵盤 ────────────────────────
         if mode_name == 'type' and not color_picker_active:
-            typed_key = keyboard.update_and_draw(disp, gaze_pt, is_blinking, curr_time)
+            typed_key = keyboard.update_and_draw(disp, gaze_pt, is_blinking, curr_time, recognized_text)
             if typed_key:
                 # 粒子特效
                 if gaze_pt:
@@ -899,6 +902,14 @@ def main():
                     recognized_text = ""
                 elif typed_key == 'EXIT':
                     mode_idx = 0
+                elif typed_key.startswith('SUG_'):
+                    word = typed_key[4:]
+                    # 把原本正在打的未完成拼字替換掉 (簡單實作：拔掉最後一個單字並接上建議)
+                    parts = recognized_text.split(' ')
+                    if parts:
+                        parts.pop()
+                    parts.append(word + " ")
+                    recognized_text = " ".join(parts).lstrip()
                 else:
                     recognized_text += typed_key
 
@@ -940,6 +951,11 @@ def main():
         fps  = 1.0 / max(now - prev_time, 0.001)
         prev_time = now
         label(disp, f"FPS {int(fps)}", 16, 120, scale=0.55, color=(0, 220, 220))
+
+        # ── 繪製視線游標 (最上層) ─────────────────────────
+        if gaze_pt and MODES[mode_idx] == 'type':
+            cv2.circle(disp, gaze_pt, 12, (255, 150, 0), 2, cv2.LINE_AA)
+            cv2.circle(disp, gaze_pt, 4, (0, 255, 255), -1, cv2.LINE_AA)
 
         cv2.imshow('Doctor Strange AR', disp)
         if cv2.waitKey(1) & 0xFF == 27:
