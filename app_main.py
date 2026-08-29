@@ -273,7 +273,7 @@ def draw_ui(img, mode, palette_idx, thickness_idx, active_tool, gesture_name,
         label(img, ' Save', btn_save[0]+4, btn_save[1]+28, color=M3['success'], scale=0.52)
         label(img, ' Next', btn_next[0]+4, btn_next[1]+28, color=M3['secondary'], scale=0.52)
     else:
-        label(img, ' Undo', btn_back[0]+4, btn_back[1]+28, color=M3['secondary'], scale=0.52)
+        label(img, ' DEL', btn_back[0]+12, btn_back[1]+28, color=M3['secondary'], scale=0.52)
         if mode == 'train':
             pill(img, btn_save, bg=(40, 25, 40), alpha=0.65, border=(200, 100, 200))
             label(img, ' Retrain', btn_save[0]+4, btn_save[1]+28, color=(255, 150, 255), scale=0.52)
@@ -331,16 +331,22 @@ def draw_ui(img, mode, palette_idx, thickness_idx, active_tool, gesture_name,
         draw = ImageDraw.Draw(img_pil)
         
         if text:
-            # 簡單換行邏輯 (每行約 16 個中文字)
             lines = []
-            cur_line = ""
-            for char in text:
-                cur_line += char
-                if len(cur_line.encode('utf-8')) > 36:
+            max_w = panel_rect[2] - panel_rect[0] - 40
+            
+            for paragraph in text.split('\n'):
+                cur_line = ""
+                for char in paragraph:
+                    test_line = cur_line + char
+                    # Use getlength if available, else fallback to approximate length
+                    length = draw.textlength(test_line, font=font) if hasattr(draw, 'textlength') else len(test_line.encode('utf-8')) * 10
+                    if length > max_w:
+                        lines.append(cur_line)
+                        cur_line = char
+                    else:
+                        cur_line = test_line
+                if cur_line:
                     lines.append(cur_line)
-                    cur_line = ""
-            if cur_line:
-                lines.append(cur_line)
                 
             max_lines = (panel_rect[3] - panel_rect[1] - 80) // 35
             display_lines = lines[-max_lines:]
@@ -350,28 +356,7 @@ def draw_ui(img, mode, palette_idx, thickness_idx, active_tool, gesture_name,
                 draw.text((panel_rect[0] + 20, y_offset), line_str, font=font, fill=(255, 255, 255))
                 y_offset += 35
                 
-        # 加一個簡單的 COPY 跟 EVALUTE 虛擬按鈕
-        btn_eval = (panel_rect[0] + 20, panel_rect[3] - 50, panel_rect[0] + 130, panel_rect[3] - 10)
-        btn_copy = (panel_rect[2] - 110, panel_rect[3] - 50, panel_rect[2] - 20, panel_rect[3] - 10)
-        
-        # Pill 是對 cv2 的 numpy 陣列操作
-        img_np = np.array(img_pil)
-        pill(img_np, btn_eval, bg=M3['primary'], alpha=0.8, border=(255,255,255))
-        pill(img_np, btn_copy, bg=M3['surface_hi'], alpha=0.8, border=(255,255,255))
-        
-        # 轉回 PIL 畫文字
-        img_pil = Image.fromarray(img_np)
-        draw = ImageDraw.Draw(img_pil)
-        draw.text((btn_eval[0] + 35, btn_eval[1] + 8), "EVAL = ", font=font, fill=(0,0,0))
-        draw.text((btn_copy[0] + 20, btn_copy[1] + 8), "CLEAR", font=font, fill=(255,255,255))
-        
         img[:] = np.array(img_pil)
-        
-        # 註冊這兩個按鈕到 UI 回傳
-        # 但目前 btn_list 是在 draw_ui 外面，我們暫時先用固定座標在主迴圈判斷，或是把這兩個也加進 btn_list。
-        # 為了簡單，我將這兩個按鈕存入全域，主迴圈可以判定。
-        global notepad_btns
-        notepad_btns = {'eval': btn_eval, 'clear_text': btn_copy}
 
     # ── AR 數學解答浮卡 ──────────────────────────────────
     if ar_ans:
@@ -394,9 +379,7 @@ def draw_ui(img, mode, palette_idx, thickness_idx, active_tool, gesture_name,
                 (btn_tool, 'tool'), (btn_save, 'save'), (btn_next, 'next'),
                 (btn_back, 'back'), (btn_clear, 'clear'), (btn_track, 'track')]
                 
-    if 'notepad_btns' in globals() and notepad_btns:
-        btn_list.append((notepad_btns['eval'], 'eval'))
-        btn_list.append((notepad_btns['clear_text'], 'clear_text'))
+
     if hover_pt:
         for rect, name in btn_list:
             if is_in(hover_pt, rect):
@@ -737,7 +720,7 @@ def main():
 
         # ── 填色底圖 AR 疊加 ─────────────────────────────
         if mode_name == 'art' and coloring.has_image:
-            coloring.blend_onto(disp)
+            coloring.blend_onto(disp[:, :W])
 
         # ── 自動辨識倒數進度條 ────────────────────────────
         pixel_count  = canvas.get_pixel_count()
@@ -893,16 +876,7 @@ def main():
                         recognized_text = ""
                         canvas.clear()
                         _recognized_path_cnt = 0
-                    elif hovered_btn == 'clear_text':
-                        recognized_text = ""
-                    elif hovered_btn == 'eval':
-                        try:
-                            # 評估 recognized_text 內的算式
-                            clean_expr = recognized_text.replace('=', '').replace(' ', '')
-                            ans = str(eval(clean_expr))
-                            recognized_text = f"{clean_expr} = {ans}"
-                        except Exception:
-                            recognized_text += " [Error]"
+
                     elif hovered_btn == 'back':
                         recognized_text = recognized_text[:-1]
                     elif hovered_btn in ('mode_left', 'mode_right', 'mode'):
@@ -1039,8 +1013,15 @@ def main():
                     recognized_text = re.sub(r'[a-zA-Zㄅ-ㄩㄚ-ㄦ˙ˊˇˋ]+$', word, recognized_text)
                 else:
                     recognized_text += typed_key
-
-
+                    
+                # 自動運算 (如果是 = 結尾)
+                if recognized_text.endswith('='):
+                    try:
+                        clean_expr = recognized_text.replace('=', '').replace(' ', '')
+                        ans = str(eval(clean_expr))
+                        recognized_text = f"{clean_expr} = {ans}\n"
+                    except Exception:
+                        pass
 
         # ── 辨識結果邊界框顯示 ───────────────────────────
         if curr_time < recog_box_expire:
@@ -1082,7 +1063,8 @@ def main():
         canvas.draw_current_stroke(disp, ink_color=ink_bgr)
 
         # ── 軳架顯示（幫助使用者看到 MediaPipe 實際追蹤到哪裏）──
-        disp = tracker.draw_landmarks(disp, results)
+        disp_view = disp[:, :W]
+        tracker.draw_landmarks(disp_view, results)
 
         # ── FPS 顯示 ──────────────────────────────────────
         now  = time.time()
