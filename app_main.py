@@ -21,6 +21,7 @@ from core.model_manager import ModelManager
 from core.magic_effects import ParticleSystem, MagicMandala, NeuralBloom, AnimalSpawner
 from core.gesture_solver import GestureStateMachine, get_palm_center, safe_math_eval
 from core.coloring_manager import ColoringManager
+from core.color_picker import ColorPicker
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -355,6 +356,9 @@ def main():
     particles = ParticleSystem()
     mandala   = MagicMandala()
     coloring  = ColoringManager(canvas_w=W, canvas_h=H)
+    color_picker = ColorPicker(W//2, H//2, radius=130)
+    color_picker_active = False
+    preview_color = None
 
     mode_idx       = 0
     palette_idx    = 0
@@ -448,17 +452,28 @@ def main():
                 canvas.notify_tracking_lost()
 
             elif gesture_name == 'thumb_up' and not fist_triggered:
-                # ── 豎大拇指 → 撤銷最後一筆 ──────────────────
+                # ── 豎大拇指 → 撤銷最後一筆 / 或取消調色盤 ───────
                 fist_triggered = True   # 用同一個 flag 防重複觸發
-                canvas.end_stroke()
-                canvas.undo_last_stroke()
-                _recognized_path_cnt = min(_recognized_path_cnt, len(canvas.paths))
+                
+                if color_picker_active:
+                    color_picker_active = False
+                else:
+                    canvas.end_stroke()
+                    canvas.undo_last_stroke()
+                    _recognized_path_cnt = min(_recognized_path_cnt, len(canvas.paths))
 
             elif gesture_name == 'fist' and not fist_triggered:
                 fist_triggered = True
                 canvas.end_stroke()
                 canvas.notify_tracking_lost()
-                if mode_name == 'art':
+                
+                if color_picker_active:
+                    # 在調色盤模式下，握拳表示確認選擇顏色
+                    if preview_color:
+                        PALETTES[palette_idx] = ("Custom", preview_color)
+                    color_picker_active = False
+                    _fist_submit = False
+                elif mode_name == 'art':
                     # ── Art 模式：握拳 → 儲存畫布為 PNG ──────
                     _fist_submit = False
                     from datetime import datetime
@@ -730,7 +745,7 @@ def main():
                         canvas.clear()
                         _recognized_path_cnt = 0
                     elif hovered_btn == 'ink':
-                        palette_idx = (palette_idx + 1) % len(PALETTES)
+                        color_picker_active = not color_picker_active
                     elif hovered_btn == 'size':
                         thickness_idx = (thickness_idx + 1) % len(THICKNESSES)
                         canvas.line_thickness = THICKNESSES[thickness_idx]
@@ -750,6 +765,20 @@ def main():
                 hover_start_time = curr_time
         else:
             last_hovered_btn = None
+
+        if color_picker_active:
+            color_picker.draw(disp)
+            # 提示文字
+            cv2.putText(disp, "Hover color, FIST to select, THUMB to cancel", (50, H - 40), 
+                        cv2.FONT_HERSHEY_DUPLEX, 0.7, (200, 255, 200), 2, cv2.LINE_AA)
+            if hover_point:
+                col = color_picker.get_color(hover_point[0], hover_point[1])
+                if col is not None:
+                    preview_color = col
+            if preview_color:
+                # 畫預覽色塊
+                cv2.circle(disp, (color_picker.cx, color_picker.cy), 30, preview_color, -1, cv2.LINE_AA)
+                cv2.circle(disp, (color_picker.cx, color_picker.cy), 30, (255, 255, 255), 2, cv2.LINE_AA)
 
 
 
