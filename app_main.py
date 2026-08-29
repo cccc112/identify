@@ -231,6 +231,8 @@ def draw_ui(img, mode, palette_idx, thickness_idx, active_tool, gesture_name,
         btn_next  = (-10, -10, -10, -10)
         btn_back  = (W - 195, PAD, W - 105, PAD + BTN_H)
         btn_clear = (W - 98, PAD, W - PAD, PAD + BTN_H)
+        if mode == 'train':
+            btn_save = (382, PAD, 490, PAD + BTN_H) # We will call it RETRAIN but use btn_save variable for hitboxes
 
     mode_bg, mode_col = MODE_COLORS.get(mode, (M3['surface'], M3['primary']))
     ink_bgr_color     = PALETTES[palette_idx][1]  # 取得目前墨水色
@@ -266,6 +268,9 @@ def draw_ui(img, mode, palette_idx, thickness_idx, active_tool, gesture_name,
         label(img, ' Next', btn_next[0]+4, btn_next[1]+28, color=M3['secondary'], scale=0.52)
     else:
         label(img, ' Undo', btn_back[0]+4, btn_back[1]+28, color=M3['secondary'], scale=0.52)
+        if mode == 'train':
+            pill(img, btn_save, bg=(40, 25, 40), alpha=0.65, border=(200, 100, 200))
+            label(img, ' Retrain', btn_save[0]+4, btn_save[1]+28, color=(255, 150, 255), scale=0.52)
 
     # 小圓點色塊（對應墨水色）
     dot_cx = btn_ink[0] + 16 if mode != 'art' else btn_ink[0] + 12
@@ -794,11 +799,17 @@ def main():
                     elif hovered_btn == 'tool':
                         active_tool = 'bucket' if active_tool == 'brush' else 'brush'
                     elif hovered_btn == 'save':
-                        timestamp = int(time.time() * 1000)
-                        save_path = os.path.join("C:\\hand", f"artwork_{timestamp}.jpg")
-                        cv2.imwrite(save_path, disp)
-                        last_recog_boxes = [(-1, -1, -1, -1, f"Saved!")]
-                        recog_box_expire = curr_time + 2.0
+                        if mode_name == 'train':
+                            import subprocess
+                            subprocess.Popen(["cmd", "/c", "python C:\\hand\\retrain.py & echo. & pause"], creationflags=subprocess.CREATE_NEW_CONSOLE)
+                            last_recog_boxes = [(-1, -1, -1, -1, f"Retraining...")]
+                            recog_box_expire = curr_time + 4.0
+                        else:
+                            timestamp = int(time.time() * 1000)
+                            save_path = os.path.join("C:\\hand", f"artwork_{timestamp}.jpg")
+                            cv2.imwrite(save_path, disp)
+                            last_recog_boxes = [(-1, -1, -1, -1, f"Saved!")]
+                            recog_box_expire = curr_time + 2.0
                     elif hovered_btn == 'next':
                         name = coloring.next_image()
                         canvas.clear()

@@ -263,7 +263,8 @@ class ModelManager:
                     'forward_slash': '/', 'ascii_124': '|',
                     'rightarrow': '→', 'ldots': '...', 'prime': "'",
                     'exists': '∃', 'forall': '∀', 'in': '∈', 'Delta': 'Δ',
-                    'sigma': 'σ', 'lambda': 'λ', 'mu': 'μ', 'phi': 'φ'
+                    'sigma': 'σ', 'lambda': 'λ', 'mu': 'μ', 'phi': 'φ',
+                    'gt': '>', 'lt': '<', 'sqrt': '√'
                 }
                 pred_char = sym_map.get(sym, sym)
                 # 基本運算符加上空白以利於計算與閱讀
