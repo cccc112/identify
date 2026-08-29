@@ -38,6 +38,13 @@ PALETTES     = [
     ("Pink",    (180,  80, 255)),  # 粉紅
     ("White",   (240, 240, 240)),  # 白
     ("Sky",     (255, 190,  80)),  # 天藍
+    ("Orange",  ( 30, 140, 255)),  # 橘色
+    ("Yellow",  ( 30, 240, 255)),  # 黃色
+    ("Lime",    ( 30, 255, 180)),  # 萊姆綠
+    ("Navy",    (180,  50,  30)),  # 海軍藍
+    ("Brown",   ( 30,  80, 150)),  # 棕色
+    ("Black",   ( 20,  20,  20)),  # 黑色
+    ("Gray",    (130, 130, 130)),  # 灰色
 ]
 THICKNESSES  = [4, 7, 12, 20]    # 筆刷粗細選項
 DRAW_DIST_THRESHOLD = 40
@@ -191,7 +198,7 @@ def is_in(pt, rect):
 #  主 UI 繪製（Material You / Pixel 風格）
 # ─────────────────────────────────────────────────────────────────
 
-def draw_ui(img, mode, palette_idx, thickness_idx, gesture_name,
+def draw_ui(img, mode, palette_idx, thickness_idx, active_tool, gesture_name,
             text, hover_pt, last_btn, hover_prog, ar_ans=None):
     """
     Material You 風格 UI。
@@ -201,11 +208,22 @@ def draw_ui(img, mode, palette_idx, thickness_idx, gesture_name,
     BTN_H = 44   # pill 高度
 
     # ── 頂部 pill 按鈕列 ─────────────────────────────────
-    btn_mode  = (PAD,       PAD, 155,      PAD + BTN_H)
-    btn_ink   = (162,       PAD, 280,      PAD + BTN_H)
-    btn_size  = (287,       PAD, 375,      PAD + BTN_H)
-    btn_back  = (W - 195,   PAD, W - 105,  PAD + BTN_H)
-    btn_clear = (W - 98,    PAD, W - PAD,  PAD + BTN_H)
+    if mode == 'art':
+        btn_mode  = (PAD, PAD, 110, PAD + BTN_H)
+        btn_ink   = (115, PAD, 205, PAD + BTN_H)
+        btn_size  = (210, PAD, 285, PAD + BTN_H)
+        btn_tool  = (290, PAD, 395, PAD + BTN_H)
+        btn_next  = (W - 180, PAD, W - 95, PAD + BTN_H)
+        btn_clear = (W - 90, PAD, W - PAD, PAD + BTN_H)
+        btn_back  = (-10, -10, -10, -10)
+    else:
+        btn_mode  = (PAD, PAD, 155, PAD + BTN_H)
+        btn_ink   = (162, PAD, 280, PAD + BTN_H)
+        btn_size  = (287, PAD, 375, PAD + BTN_H)
+        btn_tool  = (-10, -10, -10, -10)
+        btn_next  = (-10, -10, -10, -10)
+        btn_back  = (W - 195, PAD, W - 105, PAD + BTN_H)
+        btn_clear = (W - 98, PAD, W - PAD, PAD + BTN_H)
 
     mode_bg, mode_col = MODE_COLORS.get(mode, (M3['surface'], M3['primary']))
     ink_bgr_color     = PALETTES[palette_idx][1]  # 取得目前墨水色
@@ -214,30 +232,37 @@ def draw_ui(img, mode, palette_idx, thickness_idx, gesture_name,
     pill(img, btn_mode,  bg=mode_bg,       alpha=0.70, border=mode_col)
     pill(img, btn_ink,   bg=M3['surface'], alpha=0.65, border=ink_bgr_color)
     pill(img, btn_size,  bg=M3['surface'], alpha=0.65, border=M3['secondary'])
-    pill(img, btn_back,  bg=(35, 35, 55),  alpha=0.65, border=M3['secondary'])
     pill(img, btn_clear, bg=(45, 25, 25),  alpha=0.65, border=M3['error'])
+    
+    if mode == 'art':
+        pill(img, btn_tool, bg=M3['surface'], alpha=0.65, border=M3['secondary'])
+        pill(img, btn_next, bg=M3['surface'], alpha=0.65, border=M3['secondary'])
+    else:
+        pill(img, btn_back, bg=(35, 35, 55),  alpha=0.65, border=M3['secondary'])
 
     # 按鈕文字
     ink_name = PALETTES[palette_idx][0]
     thick_val = THICKNESSES[thickness_idx]
-    if mode == 'magic':
-        mode_label = '  MAGIC'
-    elif mode == 'art':
-        mode_label = '  ART'
-    else:
-        mode_label = f'  {mode.upper()}'
+    
+    mode_label_str = mode.upper()[:3] if mode == 'art' else mode.upper()
 
-    label(img, mode_label,        btn_mode[0]+4,  btn_mode[1]+28,  color=mode_col,        scale=0.52)
-    label(img, f'  {ink_name}',   btn_ink[0]+4,   btn_ink[1]+28,   color=ink_bgr_color,   scale=0.52)
-    label(img, f'  {thick_val}px',btn_size[0]+2,  btn_size[1]+28,  color=M3['secondary'], scale=0.48)
-    label(img, '  Undo',          btn_back[0]+4,  btn_back[1]+28,  color=M3['secondary'], scale=0.52)
-    label(img, '  Clear',         btn_clear[0]+4, btn_clear[1]+28, color=M3['error'],     scale=0.52)
+    label(img, f' {mode_label_str}', btn_mode[0]+4, btn_mode[1]+28, color=mode_col, scale=0.52)
+    label(img, f' {ink_name[:4]}',   btn_ink[0]+2,  btn_ink[1]+28, color=ink_bgr_color, scale=0.52)
+    label(img, f' {thick_val}px',    btn_size[0]+2, btn_size[1]+28, color=M3['secondary'], scale=0.48)
+    label(img, ' Clear',             btn_clear[0]+2, btn_clear[1]+28, color=M3['error'], scale=0.52)
+
+    if mode == 'art':
+        tool_label = 'BRUSH' if active_tool == 'brush' else 'BUCKET'
+        label(img, f' {tool_label}', btn_tool[0]+4, btn_tool[1]+28, color=M3['secondary'], scale=0.52)
+        label(img, ' Next', btn_next[0]+4, btn_next[1]+28, color=M3['secondary'], scale=0.52)
+    else:
+        label(img, ' Undo', btn_back[0]+4, btn_back[1]+28, color=M3['secondary'], scale=0.52)
 
     # 小圓點色塊（對應墨水色）
-    dot_cx = btn_ink[0] + 16
+    dot_cx = btn_ink[0] + 16 if mode != 'art' else btn_ink[0] + 12
     dot_cy = (btn_ink[1] + btn_ink[3]) // 2
-    cv2.circle(img, (dot_cx, dot_cy), 7, ink_bgr_color, -1, cv2.LINE_AA)
-    cv2.circle(img, (dot_cx, dot_cy), 7, M3['surface_hi'], 1, cv2.LINE_AA)
+    cv2.circle(img, (dot_cx, dot_cy), 5, ink_bgr_color, -1, cv2.LINE_AA)
+    cv2.circle(img, (dot_cx, dot_cy), 5, M3['surface_hi'], 1, cv2.LINE_AA)
 
     # ── 手勢狀態 badge（右下角 pill chip）────────────────
     gesture_info = {
@@ -287,6 +312,7 @@ def draw_ui(img, mode, palette_idx, thickness_idx, gesture_name,
     hovered = None
     if hover_pt:
         for rect, name in [(btn_mode, 'mode'), (btn_ink, 'ink'), (btn_size, 'size'),
+                           (btn_tool, 'tool'), (btn_next, 'next'),
                            (btn_back, 'back'), (btn_clear, 'clear')]:
             if is_in(hover_pt, rect):
                 hovered = name
@@ -333,6 +359,7 @@ def main():
     mode_idx       = 0
     palette_idx    = 0
     thickness_idx  = 1   # 預設 index=1 → 7px
+    active_tool    = 'brush' # 'brush' 或 'bucket'
 
     gesture_sm   = GestureStateMachine()
     neural_bloom = NeuralBloom()
@@ -408,23 +435,17 @@ def main():
 
             elif gesture_name == 'rock' and not rock_triggered:
                 rock_triggered = True
+                # 搖滾 → 粒子爆炸 + 清空畫布+文字+填色
+                for _ in range(80):
+                    particles.spawn(
+                        random.randint(80, 560), random.randint(60, 420),
+                        color=ink_bgr, count=1)
+                canvas.clear()
                 if mode_name == 'art':
-                    # Art 模式：搖滾 → 切換填色底圖
-                    name = coloring.next_image()
-                    canvas.clear()
-                    _recognized_path_cnt = 0
-                    last_recog_boxes = [(-1, -1, -1, -1, f"Image: {name}")]
-                    recog_box_expire = curr_time + 2.0
-                else:
-                    # 其他模式：搖滾 → 粒子爆炸 + 清空畫布+文字
-                    for _ in range(80):
-                        particles.spawn(
-                            random.randint(80, 560), random.randint(60, 420),
-                            color=ink_bgr, count=1)
-                    canvas.clear()
-                    recognized_text = ""
-                    _recognized_path_cnt = 0
-                    canvas.notify_tracking_lost()
+                    coloring.clear_fill()
+                recognized_text = ""
+                _recognized_path_cnt = 0
+                canvas.notify_tracking_lost()
 
             elif gesture_name == 'thumb_up' and not fist_triggered:
                 # ── 豎大拇指 → 撤銷最後一筆 ──────────────────
@@ -465,16 +486,24 @@ def main():
                 rock_triggered = False
                 last_draw_time = curr_time
 
-                # ── 跳躍過濾：單幀位移超過 60px → 視為雜訊（其他手指干擾）
-                _spike = False
-                if prev_draw_pt:
-                    _dx = x_idx - prev_draw_pt[0]
-                    _dy = y_idx - prev_draw_pt[1]
-                    if math.sqrt(_dx*_dx + _dy*_dy) > 60:
-                        _spike = True
-
-                if not _spike:
-                    canvas.add_point(x_idx, y_idx)
+                if mode_name == 'art' and active_tool == 'bucket':
+                    if not getattr(canvas, '_bucket_triggered', False):
+                        coloring.flood_fill(x_idx, y_idx, ink_bgr)
+                        canvas._bucket_triggered = True
+                        # 小粒子特效
+                        for _ in range(15):
+                            particles.spawn(x_idx, y_idx, color=ink_bgr, count=1)
+                else:
+                    # ── 跳躍過濾：單幀位移超過 60px → 視為雜訊（其他手指干擾）
+                    _spike = False
+                    if prev_draw_pt:
+                        _dx = x_idx - prev_draw_pt[0]
+                        _dy = y_idx - prev_draw_pt[1]
+                        if math.sqrt(_dx*_dx + _dy*_dy) > 60:
+                            _spike = True
+    
+                    if not _spike:
+                        canvas.add_point(x_idx, y_idx)
                     if prev_draw_pt:
                         d = math.sqrt((x_idx - prev_draw_pt[0])**2 + (y_idx - prev_draw_pt[1])**2)
                         if d > 10:
@@ -490,6 +519,7 @@ def main():
             else:
                 # ── hover / 確認中 ────────────────────────
                 rock_triggered = False
+                canvas._bucket_triggered = False
 
                 # 每次從畫圖切換回 hover，結束筆畫並偵測圓形
                 was_drawing = canvas.points  # 如果還有未提交的點
@@ -679,7 +709,7 @@ def main():
             ar_answer = None
 
         hovered_btn = draw_ui(
-            disp, mode_name, palette_idx, thickness_idx, gesture_name,
+            disp, mode_name, palette_idx, thickness_idx, active_tool, gesture_name,
             recognized_text, hover_point, last_hovered_btn,
             hover_progress, ar_ans=ar_ans_display
         )
@@ -704,6 +734,15 @@ def main():
                     elif hovered_btn == 'size':
                         thickness_idx = (thickness_idx + 1) % len(THICKNESSES)
                         canvas.line_thickness = THICKNESSES[thickness_idx]
+                    elif hovered_btn == 'tool':
+                        active_tool = 'bucket' if active_tool == 'brush' else 'brush'
+                    elif hovered_btn == 'next':
+                        name = coloring.next_image()
+                        canvas.clear()
+                        coloring.clear_fill()
+                        _recognized_path_cnt = 0
+                        last_recog_boxes = [(-1, -1, -1, -1, f"Image: {name}")]
+                        recog_box_expire = curr_time + 2.0
                     btn_cooldown     = curr_time
                     hover_start_time = curr_time
             else:

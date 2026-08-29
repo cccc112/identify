@@ -47,16 +47,38 @@ class ColoringManager:
         self.current = outline
         return True
 
+    def _set_current(self):
+        if self._idx >= 0 and self._idx < len(self._images):
+            self.current = self._images[self._idx][1]
+            # 初始化填色層：白底黑線
+            self.fill_layer = cv2.cvtColor(self.current, cv2.COLOR_GRAY2BGR)
+        else:
+            self.current = None
+            self.fill_layer = None
+
     def next_image(self):
         n = len(self._images)
         if n == 0:
             self._idx = -1
         else:
-            self._idx = (self._idx + 1) % (n + 1)
-            if self._idx == n:
-                self._idx = -1
-        self.current = self._images[self._idx][1] if self._idx >= 0 else None
+            self._idx = (self._idx + 1) % n  # 循環，不包含空白
+        self._set_current()
         return self.current_name
+
+    def clear_fill(self):
+        self._set_current()
+
+    def flood_fill(self, x, y, color_bgr):
+        if self.fill_layer is None:
+            return
+        h, w = self.fill_layer.shape[:2]
+        if not (0 <= x < w and 0 <= y < h):
+            return
+        
+        # 使用邊緣容差進行油漆桶填充
+        # loDiff/upDiff 控制對顏色變化的容忍度
+        mask = np.zeros((h+2, w+2), np.uint8)
+        cv2.floodFill(self.fill_layer, mask, (int(x), int(y)), color_bgr, (10, 10, 10), (10, 10, 10), 8)
 
     @property
     def current_name(self):
@@ -69,15 +91,18 @@ class ColoringManager:
         return self.current is not None
 
     def blend_onto(self, frame_bgr, alpha=0.95):
-        if self.current is None:
+        if self.fill_layer is None:
             return
         # 將背景調淡（白化/霧化），降低攝影機畫面干擾
         white_bg = np.full_like(frame_bgr, 255)
         bg = cv2.addWeighted(frame_bgr, 0.25, white_bg, 0.75, 0)
         
-        # 疊加黑色線稿
-        mask = self.current < 128
-        bg[mask] = [30, 20, 30]  # 深灰色線條
+        # 疊加填色層 (排除完全白色的地方以保留一定的透明度，或直接覆蓋)
+        # 這裡我們用正片疊底 (Multiply) 或是直接加權，但因為是數位畫布，
+        # 直接把 fill_layer 畫在 bg 上，非白色的地方覆蓋
+        gray = cv2.cvtColor(self.fill_layer, cv2.COLOR_BGR2GRAY)
+        colored_mask = gray < 240  # 填過色或黑線的部分
+        bg[colored_mask] = self.fill_layer[colored_mask]
         
         # 蓋回原本的畫面中
         np.copyto(frame_bgr, bg)
@@ -106,4 +131,4 @@ class ColoringManager:
         if self._images:
             print(f'[Coloring] {len(self._images)} pages ready. Rock in Art mode to cycle.')
             self._idx = 0
-            self.current = self._images[0][1]
+            self._set_current()
