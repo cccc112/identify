@@ -204,7 +204,7 @@ def is_in(pt, rect):
 # ─────────────────────────────────────────────────────────────────
 
 def draw_ui(img, mode, palette_idx, thickness_idx, active_tool, gesture_name,
-            text, hover_pt, last_btn, hover_prog, ar_ans=None, gaze_pt=None, use_eye_only=False):
+            text, hover_pt, last_btn, hover_prog, ar_ans=None, gaze_pt=None, track_mode_str='HAND'):
     """
     Material You 風格 UI。
     回傳: (hand_hovered_btn, gaze_hovered_btn)
@@ -276,9 +276,10 @@ def draw_ui(img, mode, palette_idx, thickness_idx, active_tool, gesture_name,
             label(img, ' Retrain', btn_save[0]+4, btn_save[1]+28, color=(255, 150, 255), scale=0.52)
 
     # 繪製全域第二排 Tracker Toggle
-    track_label = ' EYE' if use_eye_only else ' HEAD'
-    pill(img, btn_track, bg=(20, 40, 50), alpha=0.8, border=(0, 200, 200) if use_eye_only else (100, 100, 100))
-    label(img, track_label, btn_track[0]+4, btn_track[1]+28, color=(0, 255, 255) if use_eye_only else M3['secondary'], scale=0.52)
+    track_label = f' {track_mode_str}'
+    active_color = (0, 255, 255) if track_mode_str in ('EYE', 'HEAD') else M3['secondary']
+    pill(img, btn_track, bg=(20, 40, 50), alpha=0.8, border=active_color)
+    label(img, track_label, btn_track[0]+4, btn_track[1]+28, color=active_color, scale=0.52)
 
     # 小圓點色塊（對應墨水色）
     dot_cx = btn_ink[0] + 16 if mode != 'art' else btn_ink[0] + 12
@@ -398,6 +399,10 @@ def main():
     preview_color = None
     color_hover_pt = None
     color_hover_start = 0.0
+    color_hover_start = 0.0
+
+    TRACK_MODES = ['HAND', 'HEAD', 'EYE']
+    track_mode_idx = 0 # 預設為手部
 
     mode_idx       = 0
     palette_idx    = 0
@@ -444,8 +449,8 @@ def main():
         if face_results.multi_face_landmarks:
             gx, gy, is_blinking, ear_val = gaze_solver.update(face_results.multi_face_landmarks[0], W, H)
             
-            # 只在 TYPE 模式啟用並顯示視線游標，避免干擾手部畫畫
-            if MODES[mode_idx] == 'type':
+            # 若追蹤模式不是 HAND，就啟用並顯示頭部/視線游標
+            if TRACK_MODES[track_mode_idx] != 'HAND':
                 gaze_pt = (gx, gy)
 
         curr_time   = time.time()
@@ -773,7 +778,7 @@ def main():
             disp, mode_name, palette_idx, thickness_idx, active_tool, gesture_name,
             recognized_text, hover_point, last_hovered_btn,
             hover_progress, ar_ans=ar_ans_display, gaze_pt=gaze_pt,
-            use_eye_only=gaze_solver.use_eye_only
+            track_mode_str=TRACK_MODES[track_mode_idx]
         )
         
         # ── Blink 觸發 UI ─────────────────────────────────
@@ -806,8 +811,15 @@ def main():
                     elif hovered_btn == 'tool':
                         active_tool = 'bucket' if active_tool == 'brush' else 'brush'
                     elif hovered_btn == 'track':
-                        gaze_solver.use_eye_only = not gaze_solver.use_eye_only
-                        if gaze_solver.use_eye_only and mode_name != 'type':
+                        track_mode_idx = (track_mode_idx + 1) % len(TRACK_MODES)
+                        tm = TRACK_MODES[track_mode_idx]
+                        if tm == 'EYE':
+                            gaze_solver.use_eye_only = True
+                        else:
+                            gaze_solver.use_eye_only = False
+                        
+                        # 當切換為 HEAD 或 EYE 時，自動跳轉到 TYPE (鍵盤) 模式
+                        if tm in ('HEAD', 'EYE') and mode_name != 'type':
                             try:
                                 mode_idx = MODES.index('type')
                             except ValueError:
@@ -887,12 +899,14 @@ def main():
 
         # ── 繪製 TYPE 模式的視線鍵盤 ────────────────────────
         if mode_name == 'type' and not color_picker_active:
-            typed_key = keyboard.update_and_draw(disp, gaze_pt, is_blinking, curr_time, recognized_text)
+            # 在 HAND 模式下使用手部游標，否則使用視線游標
+            kb_pt = gaze_pt if TRACK_MODES[track_mode_idx] != 'HAND' else hover_point
+            typed_key = keyboard.update_and_draw(disp, kb_pt, is_blinking, curr_time, recognized_text)
             if typed_key:
                 # 粒子特效
-                if gaze_pt:
+                if kb_pt:
                     for _ in range(30):
-                        particles.spawn(gaze_pt[0], gaze_pt[1], color=(200, 255, 100), count=1)
+                        particles.spawn(kb_pt[0], kb_pt[1], color=(200, 255, 100), count=1)
                         
                 if typed_key == 'SPACE':
                     recognized_text += " "
@@ -953,7 +967,7 @@ def main():
         label(disp, f"FPS {int(fps)}", 16, 120, scale=0.55, color=(0, 220, 220))
 
         # ── 繪製視線游標 (最上層) ─────────────────────────
-        if gaze_pt and MODES[mode_idx] == 'type':
+        if gaze_pt:
             cv2.circle(disp, gaze_pt, 12, (255, 150, 0), 2, cv2.LINE_AA)
             cv2.circle(disp, gaze_pt, 4, (0, 255, 255), -1, cv2.LINE_AA)
 
