@@ -818,10 +818,18 @@ def main():
                         else:
                             gaze_solver.use_eye_only = False
                         
-                        # 當切換為 HEAD 或 EYE 時，自動跳轉到 TYPE (鍵盤) 模式
+                        # 自動綁定應用場景：
+                        # HEAD / EYE ➔ 自動跳轉到鍵盤模式 (TYPE)
+                        # HAND ➔ 自動跳轉回手寫辨識模式 (DRAW)
                         if tm in ('HEAD', 'EYE') and mode_name != 'type':
                             try:
                                 mode_idx = MODES.index('type')
+                            except ValueError:
+                                pass
+                            canvas.clear()
+                        elif tm == 'HAND' and mode_name == 'type':
+                            try:
+                                mode_idx = MODES.index('draw')
                             except ValueError:
                                 pass
                             canvas.clear()
