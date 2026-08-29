@@ -204,13 +204,16 @@ def is_in(pt, rect):
 # ─────────────────────────────────────────────────────────────────
 
 def draw_ui(img, mode, palette_idx, thickness_idx, active_tool, gesture_name,
-            text, hover_pt, last_btn, hover_prog, ar_ans=None, gaze_pt=None):
+            text, hover_pt, last_btn, hover_prog, ar_ans=None, gaze_pt=None, use_eye_only=False):
     """
     Material You 風格 UI。
     回傳: (hand_hovered_btn, gaze_hovered_btn)
     """
     PAD   = 10
     BTN_H = 44   # pill 高度
+
+    # 第二排永遠固定一個 Tracker Toggle
+    btn_track = (PAD, PAD + BTN_H + 10, 110, PAD + BTN_H * 2 + 10)
 
     # ── 頂部 pill 按鈕列 ─────────────────────────────────
     if mode == 'art':
@@ -233,8 +236,6 @@ def draw_ui(img, mode, palette_idx, thickness_idx, active_tool, gesture_name,
         btn_clear = (W - 98, PAD, W - PAD, PAD + BTN_H)
         if mode == 'train':
             btn_save = (382, PAD, 490, PAD + BTN_H) # We will call it RETRAIN but use btn_save variable for hitboxes
-        elif mode == 'type':
-            btn_tool = (382, PAD, 490, PAD + BTN_H) # Used for EYE/HEAD toggle
 
     mode_bg, mode_col = MODE_COLORS.get(mode, (M3['surface'], M3['primary']))
     ink_bgr_color     = PALETTES[palette_idx][1]  # 取得目前墨水色
@@ -273,10 +274,11 @@ def draw_ui(img, mode, palette_idx, thickness_idx, active_tool, gesture_name,
         if mode == 'train':
             pill(img, btn_save, bg=(40, 25, 40), alpha=0.65, border=(200, 100, 200))
             label(img, ' Retrain', btn_save[0]+4, btn_save[1]+28, color=(255, 150, 255), scale=0.52)
-        elif mode == 'type':
-            track_label = ' EYE' if gaze_solver.use_eye_only else ' HEAD'
-            pill(img, btn_tool, bg=M3['surface'], alpha=0.65, border=M3['secondary'])
-            label(img, track_label, btn_tool[0]+4, btn_tool[1]+28, color=M3['secondary'], scale=0.52)
+
+    # 繪製全域第二排 Tracker Toggle
+    track_label = ' EYE' if use_eye_only else ' HEAD'
+    pill(img, btn_track, bg=(20, 40, 50), alpha=0.8, border=(0, 200, 200) if use_eye_only else (100, 100, 100))
+    label(img, track_label, btn_track[0]+4, btn_track[1]+28, color=(0, 255, 255) if use_eye_only else M3['secondary'], scale=0.52)
 
     # 小圓點色塊（對應墨水色）
     dot_cx = btn_ink[0] + 16 if mode != 'art' else btn_ink[0] + 12
@@ -334,7 +336,7 @@ def draw_ui(img, mode, palette_idx, thickness_idx, active_tool, gesture_name,
     
     btn_list = [(btn_mode, 'mode'), (btn_ink, 'ink'), (btn_size, 'size'),
                 (btn_tool, 'tool'), (btn_save, 'save'), (btn_next, 'next'),
-                (btn_back, 'back'), (btn_clear, 'clear')]
+                (btn_back, 'back'), (btn_clear, 'clear'), (btn_track, 'track')]
                 
     if hover_pt:
         for rect, name in btn_list:
@@ -772,7 +774,8 @@ def main():
         hovered_btn, gaze_hovered_btn = draw_ui(
             disp, mode_name, palette_idx, thickness_idx, active_tool, gesture_name,
             recognized_text, hover_point, last_hovered_btn,
-            hover_progress, ar_ans=ar_ans_display, gaze_pt=gaze_pt
+            hover_progress, ar_ans=ar_ans_display, gaze_pt=gaze_pt,
+            use_eye_only=gaze_solver.use_eye_only
         )
         
         # ── Blink 觸發 UI ─────────────────────────────────
@@ -803,10 +806,9 @@ def main():
                         thickness_idx = (thickness_idx + 1) % len(THICKNESSES)
                         canvas.line_thickness = THICKNESSES[thickness_idx]
                     elif hovered_btn == 'tool':
-                        if mode_name == 'type':
-                            gaze_solver.use_eye_only = not gaze_solver.use_eye_only
-                        else:
-                            active_tool = 'bucket' if active_tool == 'brush' else 'brush'
+                        active_tool = 'bucket' if active_tool == 'brush' else 'brush'
+                    elif hovered_btn == 'track':
+                        gaze_solver.use_eye_only = not gaze_solver.use_eye_only
                     elif hovered_btn == 'save':
                         if mode_name == 'train':
                             import subprocess
