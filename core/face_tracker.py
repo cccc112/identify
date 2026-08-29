@@ -44,9 +44,17 @@ class FaceTracker:
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame_rgb)
         
-        # 必須傳入 timestamp (ms)
+        # 必須傳入單調遞增的 timestamp (ms)
         timestamp_ms = int(time.time() * 1000) - self._start_ms
-        detection_result = self.detector.detect_for_video(mp_image, timestamp_ms)
+        if hasattr(self, '_last_timestamp_ms') and timestamp_ms <= self._last_timestamp_ms:
+            timestamp_ms = self._last_timestamp_ms + 1
+        self._last_timestamp_ms = timestamp_ms
+        
+        try:
+            detection_result = self.detector.detect_for_video(mp_image, timestamp_ms)
+        except Exception as e:
+            # 保護機制，避免 crash
+            detection_result = None
         
         # 為了跟 GazeSolver 相容，我們自建一個假的 results 物件
         class DummyResults:
