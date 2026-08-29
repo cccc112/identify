@@ -27,7 +27,7 @@ from core.coloring_manager import ColoringManager
 #  常數設定
 # ─────────────────────────────────────────────────────────────────
 W, H = 640, 480
-MODES        = ["digit", "letter", "symbol", "magic", "art"]
+MODES        = ["digit", "letter", "symbol", "magic", "art", "train"]
 MIN_BLOOM_RADIUS = 50
 PALETTES     = [
     ("Gold",    ( 50, 200, 255)),  # 橙金
@@ -598,13 +598,73 @@ def main():
                         ar_answer = (ans, curr_time + 4.0)
             # !! 不再自動清空畫布 !! 等使用者主動搖滾或按 Clear
 
+        def _do_train_save():
+            nonlocal _recognized_path_cnt, last_draw_time, recognized_text
+            import os
+            new_paths = canvas.paths[_recognized_path_cnt:]
+            if not new_paths: return
+            
+            groups = model_mgr._group_strokes(new_paths, merge_threshold=80)
+            if not groups: return
+            
+            for grp in groups:
+                gx, gy, gw, gh, path_indices = grp
+                if gw * gh < 100: continue
+                mini = np.zeros((H, W), dtype=np.uint8)
+                for idx in path_indices:
+                    path = new_paths[idx]
+                    if len(path) > 1:
+                        for i in range(1, len(path)):
+                            cv2.line(mini, path[i-1], path[i], 255, canvas.line_thickness, cv2.LINE_AA)
+                            cv2.circle(mini, path[i], canvas.line_thickness//2, 255, -1, cv2.LINE_AA)
+                    elif len(path) == 1:
+                        cv2.circle(mini, path[0], canvas.line_thickness//2+1, 255, -1, cv2.LINE_AA)
+                pad = 20
+                x1, y1 = max(0, gx-pad), max(0, gy-pad)
+                x2, y2 = min(W, gx+gw+pad), min(H, gy+gh+pad)
+                roi = mini[y1:y2, x1:x2]
+                if roi.size == 0: continue
+                
+                win_name = "Train Mode: Press key for this char (ESC to skip)"
+                cv2.imshow(win_name, roi)
+                key = cv2.waitKey(0)
+                cv2.destroyWindow(win_name)
+                
+                if key not in (27, -1):
+                    char_str = chr(key & 0xFF)
+                    # Window cannot have some characters in folder names like '*', '?', '<', '>'
+                    folder_name = char_str
+                    if char_str == '*': folder_name = 'times'
+                    elif char_str == '/': folder_name = 'div'
+                    elif char_str == '<': folder_name = 'lt'
+                    elif char_str == '>': folder_name = 'gt'
+                    elif char_str == '?': folder_name = 'question'
+                    elif char_str == '|': folder_name = 'pipe'
+                    
+                    save_dir = f"C:/hand/custom_dataset/{folder_name}"
+                    os.makedirs(save_dir, exist_ok=True)
+                    fname = f"{save_dir}/{int(time.time()*1000)}.png"
+                    cv2.imwrite(fname, roi)
+                    print(f"Saved {fname} for character '{char_str}'")
+                    recognized_text += f" [Saved {char_str}] "
+            
+            _recognized_path_cnt = len(canvas.paths)
+            canvas.clear()
+            _recognized_path_cnt = 0
+
         # Magic/Art 模式不做辨識
-        if has_enough and time_elapsed > SEG_TIMEOUT:
-            _do_recognize()
-        elif _fist_submit:
-            _fist_submit = False
-            if canvas.has_content() and canvas.get_pixel_count() >= MIN_PIXELS:
+        if mode_name == 'train':
+            if _fist_submit:
+                _fist_submit = False
+                if canvas.has_content() and canvas.get_pixel_count() >= MIN_PIXELS:
+                    _do_train_save()
+        else:
+            if has_enough and time_elapsed > SEG_TIMEOUT:
                 _do_recognize()
+            elif _fist_submit:
+                _fist_submit = False
+                if canvas.has_content() and canvas.get_pixel_count() >= MIN_PIXELS:
+                    _do_recognize()
 
         # ── Hover 進度計算 ────────────────────────────────
         hover_progress = 0.0
