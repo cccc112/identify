@@ -7,19 +7,19 @@ LAYOUTS = {
         ['Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P'],
         ['A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L'],
         ['SHIFT', 'Z', 'X', 'C', 'V', 'B', 'N', 'M', 'BKSP'],
-        ['LANG', ',', 'SPACE', '.', 'ENTER', 'EXIT']
+        ['EN/中', ',', 'SPACE', '.', 'ENTER', 'EXIT']
     ],
     'NUM / SYM': [
         ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'],
         ['@', '#', '$', '%', '&', '-', '+', '(', ')'],
         ['*', '"', "'", ':', ';', '!', '?', 'BKSP'],
-        ['LANG', ',', 'SPACE', '.', 'ENTER', 'EXIT']
+        ['EN/中', ',', 'SPACE', '.', 'ENTER', 'EXIT']
     ],
     'ZHUYIN (注音)': [
         ['ㄅ','ㄉ','ˇ','ˋ','ㄓ','ˊ','˙','ㄚ','ㄞ','ㄢ'],
         ['ㄆ','ㄊ','ㄍ','ㄐ','ㄔ','ㄗ','ㄧ','ㄛ','ㄟ','ㄣ'],
         ['ㄇ','ㄋ','ㄎ','ㄑ','ㄕ','ㄘ','ㄨ','ㄜ','ㄠ','ㄤ', 'BKSP'],
-        ['LANG', 'ㄈ', 'SPACE', 'ㄥ', 'ENTER', 'EXIT'] # Simplified for spacing, or standard:
+        ['EN/中', 'ㄈ', 'SPACE', 'ㄥ', 'ENTER', 'EXIT'] # Simplified for spacing, or standard:
     ]
 }
 
@@ -29,7 +29,7 @@ LAYOUTS['ZHUYIN (注音)'] = [
     ['ㄆ','ㄊ','ㄍ','ㄐ','ㄔ','ㄗ','ㄧ','ㄛ','ㄟ','ㄣ'],
     ['ㄇ','ㄋ','ㄎ','ㄑ','ㄕ','ㄘ','ㄨ','ㄜ','ㄠ','ㄤ'],
     ['ㄈ','ㄌ','ㄏ','ㄒ','ㄖ','ㄙ','ㄩ','ㄝ','ㄡ','ㄥ', 'BKSP'],
-    ['LANG', ',', 'SPACE', '.', 'ENTER', 'EXIT']
+    ['EN/中', ',', 'SPACE', '.', 'ENTER', 'EXIT']
 ]
 
 class GazeKeyboard:
@@ -60,7 +60,7 @@ class GazeKeyboard:
             # 若某些按鍵需要比較寬 (例如 SPACE)
             actual_row_w = 0
             for k in row:
-                if k in ('SPACE', 'LANG', 'BKSP', 'CLEAR', 'EXIT'):
+                if k in ('SPACE', 'EN/中', 'BKSP', 'CLEAR', 'EXIT'):
                     actual_row_w += int(key_w * 1.5) + gap
                 else:
                     actual_row_w += key_w + gap
@@ -70,7 +70,7 @@ class GazeKeyboard:
             cx = start_x
             
             for key in row:
-                kw = int(key_w * 1.5) if key in ('SPACE', 'LANG', 'BKSP', 'CLEAR', 'EXIT') else key_w
+                kw = int(key_w * 1.5) if key in ('SPACE', 'EN/中', 'BKSP', 'CLEAR', 'EXIT') else key_w
                 x1 = cx
                 x2 = cx + kw
                 y1 = start_y + r_idx * (key_h + gap)
@@ -114,8 +114,20 @@ class GazeKeyboard:
         if current_word in dict_map:
             return dict_map[current_word][:3]
             
-        # 嘗試英文前綴
-        en_words = ["hello", "how", "are", "you", "good", "morning", "night", "thanks", "what", "where", "when", "why"]
+        # 嘗試英文前綴 (增加常見基礎單字)
+        en_words = [
+            "the", "be", "to", "of", "and", "a", "in", "that", "have", "i",
+            "it", "for", "not", "on", "with", "he", "as", "you", "do", "at",
+            "this", "but", "his", "by", "from", "they", "we", "say", "her", "she",
+            "or", "an", "will", "my", "one", "all", "would", "there", "their", "what",
+            "so", "up", "out", "if", "about", "who", "get", "which", "go", "me",
+            "when", "make", "can", "like", "time", "no", "just", "him", "know", "take",
+            "people", "into", "year", "your", "good", "some", "could", "them", "see", "other",
+            "than", "then", "now", "look", "only", "come", "its", "over", "think", "also",
+            "back", "after", "use", "two", "how", "our", "work", "first", "well", "way",
+            "even", "new", "want", "because", "any", "these", "give", "day", "most", "us",
+            "hello", "morning", "night", "thanks", "sorry", "please", "yes", "where", "why"
+        ]
         matches = [w for w in en_words if w.startswith(current_word.lower())]
         if matches:
             return matches[:3]
@@ -179,7 +191,7 @@ class GazeKeyboard:
             bg_col = (80, 150, 255) if is_hover else (50, 60, 70)
             text_col = (255, 255, 255)
             
-            if label in ('LANG', 'SPACE', 'BKSP', 'CLEAR'):
+            if label in ('EN/中', 'SPACE', 'BKSP', 'CLEAR'):
                 bg_col = (100, 180, 100) if is_hover else (40, 80, 50)
             elif label == 'EXIT':
                 bg_col = (60, 60, 200) if is_hover else (40, 40, 120)
@@ -230,7 +242,7 @@ class GazeKeyboard:
                     self.hover_start = curr_time + 0.5
 
         # 處理特殊功能鍵
-        if triggered_key == 'LANG':
+        if triggered_key == 'EN/中':
             self.layout_idx = (self.layout_idx + 1) % len(self.layout_names)
             self._build_layout()
             return None # 攔截不輸出
