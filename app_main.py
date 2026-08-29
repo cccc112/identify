@@ -650,7 +650,7 @@ def main():
             if not groups: return
             
             for grp in groups:
-                gx, gy, gw, gh, path_indices = grp
+                (gx, gy, gw, gh), path_indices = grp
                 if gw * gh < 100: continue
                 mini = np.zeros((H, W), dtype=np.uint8)
                 for idx in path_indices:
