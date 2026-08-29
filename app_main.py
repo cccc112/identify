@@ -359,6 +359,8 @@ def main():
     color_picker = ColorPicker(W//2, H//2, radius=130)
     color_picker_active = False
     preview_color = None
+    color_hover_pt = None
+    color_hover_start = 0.0
 
     mode_idx       = 0
     palette_idx    = 0
@@ -466,12 +468,7 @@ def main():
                 fist_triggered = True
                 canvas.end_stroke()
                 canvas.notify_tracking_lost()
-                
                 if color_picker_active:
-                    # 在調色盤模式下，握拳表示確認選擇顏色
-                    if preview_color:
-                        PALETTES[palette_idx] = ("Custom", preview_color)
-                    color_picker_active = False
                     _fist_submit = False
                 elif mode_name == 'art':
                     # ── Art 模式：握拳 → 儲存畫布為 PNG ──────
@@ -649,7 +646,7 @@ def main():
             new_paths = canvas.paths[_recognized_path_cnt:]
             if not new_paths: return
             
-            groups = model_mgr._group_strokes(new_paths, merge_threshold=80)
+            groups = model_mgr._group_strokes(new_paths, gap_threshold=80)
             if not groups: return
             
             for grp in groups:
@@ -746,6 +743,7 @@ def main():
                         _recognized_path_cnt = 0
                     elif hovered_btn == 'ink':
                         color_picker_active = not color_picker_active
+                        color_hover_start = curr_time
                     elif hovered_btn == 'size':
                         thickness_idx = (thickness_idx + 1) % len(THICKNESSES)
                         canvas.line_thickness = THICKNESSES[thickness_idx]
@@ -769,16 +767,42 @@ def main():
         if color_picker_active:
             color_picker.draw(disp)
             # 提示文字
-            cv2.putText(disp, "Hover color, FIST to select, THUMB to cancel", (50, H - 40), 
+            cv2.putText(disp, "Hover 0.8s to select, THUMB to cancel", (80, H - 40), 
                         cv2.FONT_HERSHEY_DUPLEX, 0.7, (200, 255, 200), 2, cv2.LINE_AA)
             if hover_point:
                 col = color_picker.get_color(hover_point[0], hover_point[1])
                 if col is not None:
                     preview_color = col
+                    if color_hover_pt:
+                        dx = hover_point[0] - color_hover_pt[0]
+                        dy = hover_point[1] - color_hover_pt[1]
+                        if math.sqrt(dx*dx + dy*dy) < 5:
+                            if curr_time - color_hover_start > 0.8:
+                                # 自動選取！
+                                PALETTES[palette_idx] = ("Custom", preview_color)
+                                color_picker_active = False
+                                _fist_submit = False
+                                color_hover_start = curr_time # reset
+                        else:
+                            color_hover_pt = hover_point
+                            color_hover_start = curr_time
+                    else:
+                        color_hover_pt = hover_point
+                        color_hover_start = curr_time
+                else:
+                    color_hover_pt = None
+                    
             if preview_color:
                 # 畫預覽色塊
                 cv2.circle(disp, (color_picker.cx, color_picker.cy), 30, preview_color, -1, cv2.LINE_AA)
                 cv2.circle(disp, (color_picker.cx, color_picker.cy), 30, (255, 255, 255), 2, cv2.LINE_AA)
+                
+                # 畫進度條
+                if color_hover_pt and (curr_time - color_hover_start) > 0.1:
+                    prog = min(1.0, (curr_time - color_hover_start) / 0.8)
+                    angle = int(360 * prog)
+                    cv2.ellipse(disp, (color_picker.cx, color_picker.cy), (38, 38),
+                                0, 0, angle, (200, 255, 200), 3, cv2.LINE_AA)
 
 
 
