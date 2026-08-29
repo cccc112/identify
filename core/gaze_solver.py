@@ -63,11 +63,12 @@ class GazeSolver:
             avg_y = (ly + ry_y) / 2.0
             
             # 瞳孔在眼眶內的比例，置中時大約是 0.5
-            # X軸：(0.35 ~ 0.65) -> (0.0 ~ 1.0)
-            mapped_x = (avg_x - 0.35) / 0.30
-            
-            # Y軸：(0.35 ~ 0.65) -> (0.0 ~ 1.0)
-            mapped_y = (avg_y - 0.35) / 0.30
+            # 針對左右不好移動的問題，我們以 0.5 為中心，進行放大 (Sensitivity)
+            # multiplier 越大，越容易碰到螢幕邊緣
+            SENSITIVITY_X = 4.0
+            SENSITIVITY_Y = 3.5
+            mapped_x = 0.5 + (avg_x - 0.5) * SENSITIVITY_X
+            mapped_y = 0.5 + (avg_y - 0.45) * SENSITIVITY_Y # Y中心稍微偏上
             
             # Y軸經常會感覺相反（往上變往下），如果發現反向，將它反轉：
             mapped_y = 1.0 - mapped_y
@@ -80,8 +81,9 @@ class GazeSolver:
             nose_y = lm[1].y
             
             # 放大使用者的微小頭部動作，映射到全螢幕
-            mapped_x = (nose_x - 0.3) / 0.4
-            mapped_y = (nose_y - 0.3) / 0.4
+            # 之前範圍太大導致要動很多，現在縮小範圍，提高靈敏度
+            mapped_x = (nose_x - 0.4) / 0.2
+            mapped_y = (nose_y - 0.4) / 0.2
             raw_x = mapped_x * W
             raw_y = mapped_y * H
         

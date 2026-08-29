@@ -302,21 +302,40 @@ def draw_ui(img, mode, palette_idx, thickness_idx, active_tool, gesture_name,
     pill(img, chip_rect, bg=M3['surface'], alpha=0.75, border=gcol)
     label(img, gtext, chip_rect[0] + 14, chip_rect[1] + 28, color=gcol, scale=0.50)
 
-    # ── 底部輸出文字框（大圓角，更高）─────────────────────
-    bar_y1, bar_y2 = H - 78, H - PAD
-    bar = (PAD, bar_y1, W - PAD, bar_y2)
-    glass_rect(img, bar, alpha=0.55, bg=M3['bg'], radius=22,
-               border=M3['surface_hi'])
-    # 左側色條指示目前模式
-    indicator_col = mode_col
-    cv2.rectangle(img,
-                  (PAD + 4, bar_y1 + 8),
-                  (PAD + 8, bar_y2 - 8),
-                  indicator_col, -1, cv2.LINE_AA)
-    # 輸出文字
-    display = recognized_text_display(text)
-    label(img, display, PAD + 22, bar_y1 + 48,
-          scale=1.05, color=M3['on_surface'], thick=2)
+    # ── 右側白板 (Notepad) ─────────────────────────────
+    # 原本在底部的文字框，改到右側大面積白板，支援自動換行顯示
+    panel_w = 320
+    panel_rect = (W - panel_w - PAD, PAD + BTN_H + 20, W - PAD, H - 115)
+    glass_rect(img, panel_rect, alpha=0.65, bg=(30, 30, 35), radius=16, border=M3['surface_hi'])
+    
+    # 標題
+    cv2.putText(img, "Notepad", (panel_rect[0] + 15, panel_rect[1] + 30),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.6, M3['secondary'], 1, cv2.LINE_AA)
+    cv2.line(img, (panel_rect[0]+10, panel_rect[1]+40), (panel_rect[2]-10, panel_rect[1]+40), M3['surface_hi'], 1)
+    
+    # 內文自動換行
+    from PIL import ImageFont, ImageDraw, Image
+    if text:
+        # 簡單換行邏輯 (每行約 15 個中文字 / 30 個英文字母)
+        lines = []
+        cur_line = ""
+        for char in text:
+            cur_line += char
+            # 中文寬，英文窄，這裡用簡單長度估算
+            if len(cur_line.encode('utf-8')) > 30:
+                lines.append(cur_line)
+                cur_line = ""
+        if cur_line:
+            lines.append(cur_line)
+            
+        # 保持最後幾行在畫面內
+        max_lines = (panel_rect[3] - panel_rect[1] - 60) // 35
+        display_lines = lines[-max_lines:]
+        
+        y_offset = panel_rect[1] + 70
+        for line_str in display_lines:
+            label(img, line_str, panel_rect[0] + 15, y_offset, scale=0.8, color=M3['on_surface'], thick=2)
+            y_offset += 35
 
     # ── AR 數學解答浮卡 ──────────────────────────────────
     if ar_ans:
@@ -342,20 +361,34 @@ def draw_ui(img, mode, palette_idx, thickness_idx, active_tool, gesture_name,
     if hover_pt:
         for rect, name in btn_list:
             if is_in(hover_pt, rect):
-                hovered = name
-                if name == last_btn and hover_prog > 0:
+                if name in ('mode', 'track'):
+                    cx = (rect[0] + rect[2]) // 2
+                    if hover_pt[0] < cx:
+                        hovered = f"{name}_left"
+                    else:
+                        hovered = f"{name}_right"
+                else:
+                    hovered = name
+                if hovered == last_btn and hover_prog > 0:
                     # 亮邊框高亮
                     cv2.rectangle(img, rect[:2], rect[2:],
                                   M3['on_surface'], 2, cv2.LINE_AA)
-                    cx = (rect[0] + rect[2]) // 2
-                    hover_arc(img, cx, rect[3] + 14, 10, hover_prog,
+                    hcx = (rect[0] + rect[2]) // 2
+                    hover_arc(img, hcx, rect[3] + 14, 10, hover_prog,
                               color=M3['primary'])
                 break
 
     if gaze_pt:
         for rect, name in btn_list:
             if is_in(gaze_pt, rect):
-                gaze_hovered = name
+                if name in ('mode', 'track'):
+                    cx = (rect[0] + rect[2]) // 2
+                    if gaze_pt[0] < cx:
+                        gaze_hovered = f"{name}_left"
+                    else:
+                        gaze_hovered = f"{name}_right"
+                else:
+                    gaze_hovered = name
                 # 視線游標如果在按鈕上，加一個光暈
                 cv2.rectangle(img, rect[:2], rect[2:], (255, 200, 100), 1, cv2.LINE_AA)
                 break
@@ -465,8 +498,11 @@ def main():
             lm = results.hand_landmarks[0]
 
             # ── 上游座標平滑：先對 raw landmark 做 EMA，後續所有操作都用平滑後的座標 ──
-            raw_x = int(np.clip(lm[8].x * W, 5, W - 5))
-            raw_y = int(np.clip(lm[8].y * H, 5, H - 5))
+            # 把手部 Y 軸向下延伸放大，讓手不用真的伸到畫面最底部也能碰到螢幕下緣
+            hx = lm[8].x
+            hy = lm[8].y / 0.8  # 將 0.0~0.8 映射到 0.0~1.0
+            raw_x = int(np.clip(hx * W, 5, W - 5))
+            raw_y = int(np.clip(hy * H, 5, H - 5))
             x_idx, y_idx = pointer.update(raw_x, raw_y)
 
             # 中指只用於手勢判斷，對中指也稍微平滑
@@ -798,8 +834,9 @@ def main():
                         _recognized_path_cnt = 0
                     elif hovered_btn == 'back':
                         recognized_text = recognized_text[:-1]
-                    elif hovered_btn == 'mode':
-                        mode_idx = (mode_idx + 1) % len(MODES)
+                    elif hovered_btn in ('mode_left', 'mode_right', 'mode'):
+                        step = -1 if hovered_btn == 'mode_left' else 1
+                        mode_idx = (mode_idx + step) % len(MODES)
                         canvas.clear()
                         _recognized_path_cnt = 0
                     elif hovered_btn == 'ink':
@@ -810,8 +847,9 @@ def main():
                         canvas.line_thickness = THICKNESSES[thickness_idx]
                     elif hovered_btn == 'tool':
                         active_tool = 'bucket' if active_tool == 'brush' else 'brush'
-                    elif hovered_btn == 'track':
-                        track_mode_idx = (track_mode_idx + 1) % len(TRACK_MODES)
+                    elif hovered_btn in ('track_left', 'track_right', 'track'):
+                        step = -1 if hovered_btn == 'track_left' else 1
+                        track_mode_idx = (track_mode_idx + step) % len(TRACK_MODES)
                         tm = TRACK_MODES[track_mode_idx]
                         if tm == 'EYE':
                             gaze_solver.use_eye_only = True
@@ -819,8 +857,6 @@ def main():
                             gaze_solver.use_eye_only = False
                         
                         # 自動綁定應用場景：
-                        # HEAD / EYE ➔ 自動跳轉到鍵盤模式 (TYPE)
-                        # HAND ➔ 自動跳轉回手寫辨識模式 (DRAW)
                         if tm in ('HEAD', 'EYE') and mode_name != 'type':
                             try:
                                 mode_idx = MODES.index('type')
@@ -926,12 +962,9 @@ def main():
                     mode_idx = 0
                 elif typed_key.startswith('SUG_'):
                     word = typed_key[4:]
-                    # 把原本正在打的未完成拼字替換掉 (簡單實作：拔掉最後一個單字並接上建議)
-                    parts = recognized_text.split(' ')
-                    if parts:
-                        parts.pop()
-                    parts.append(word + " ")
-                    recognized_text = " ".join(parts).lstrip()
+                    # 把原本正在打的未完成拼字替換掉 (以注音或英文結尾的部分)
+                    import re
+                    recognized_text = re.sub(r'[a-zA-Zㄅ-ㄩㄚ-ㄦ˙ˊˇˋ]+$', word, recognized_text)
                 else:
                     recognized_text += typed_key
 

@@ -82,20 +82,46 @@ class GazeKeyboard:
         return rect[0] <= pt[0] <= rect[2] and rect[1] <= pt[1] <= rect[3]
 
     def _get_recommendations(self, current_word):
-        # 非常基礎的範例建議詞庫，供展示概念
-        word_list = ["hello", "how", "are", "you", "good", "morning", "night", 
-                     "thanks", "yes", "no", "what", "where", "when", "why", "who", "the", "and"]
         if not current_word:
-            return ["hello", "how", "you"]
-        # Zhuyin (Bopomofo) naive prefix mock
-        if current_word == 'ㄋ': return ["你好", "哪裡", "那個"]
-        if current_word == 'ㄏ': return ["好", "很", "還"]
-        if current_word == 'ㄨ': return ["我", "我們", "為什麼"]
+            return ["你好", "我", "謝謝"]
+            
+        # 簡單的注音與英文詞庫
+        dict_map = {
+            'ㄋ': ["你", "你好", "哪裡", "那個", "能"],
+            'ㄋㄧ': ["你", "你好", "你們", "年輕"],
+            'ㄏ': ["好", "很", "還", "會", "和"],
+            'ㄏㄠ': ["好", "好像", "好笑"],
+            'ㄨ': ["我", "我們", "為什麼", "問題"],
+            'ㄨㄛ': ["我", "我們"],
+            'ㄕ': ["是", "什麼", "時間"],
+            'ㄕㄉ': ["是的", "誰的"],
+            'ㄉ': ["的", "對", "大", "到"],
+            'ㄉㄨㄟ': ["對", "對不起", "對吧"],
+            'ㄅ': ["不", "把", "被", "比"],
+            'ㄅㄨ': ["不", "不是", "不用", "不會"],
+            'ㄒ': ["謝謝", "想", "喜歡", "小"],
+            'ㄒㄧㄝ': ["謝謝", "些", "寫"],
+            'ㄗ': ["在", "做", "怎麼", "走"],
+            'ㄗㄞ': ["在", "再見", "再來"],
+            'ㄐ': ["就", "家", "今天", "見"],
+            'ㄇ': ["嗎", "沒", "買", "賣"],
+            'ㄇㄟ': ["沒有", "沒事", "妹妹"],
+            'ㄧ': ["一", "有", "要", "也"],
+            'ㄧㄡ': ["有", "右邊", "優秀"]
+        }
         
-        matches = [w for w in word_list if w.startswith(current_word.lower())]
-        if not matches:
-            return []
-        return matches[:3]
+        # 嘗試直接匹配
+        if current_word in dict_map:
+            return dict_map[current_word][:3]
+            
+        # 嘗試英文前綴
+        en_words = ["hello", "how", "are", "you", "good", "morning", "night", "thanks", "what", "where", "when", "why"]
+        matches = [w for w in en_words if w.startswith(current_word.lower())]
+        if matches:
+            return matches[:3]
+            
+        # 兜底：直接返回使用者目前打的注音字串作為一個「選項」
+        return [current_word]
 
     def update_and_draw(self, img, gaze_pt, is_blinking, curr_time, recognized_text=""):
         """
@@ -113,9 +139,10 @@ class GazeKeyboard:
         cv2.addWeighted(overlay, 0.7, img, 0.3, 0, img)
         
         # 推薦字
-        # 擷取目前正在打的最後一個詞
-        words = recognized_text.split()
-        current_word = words[-1] if words and not recognized_text.endswith(' ') else ""
+        # 擷取字串最後的連續注音或英文字母作為「正在拼的字」
+        import re
+        match = re.search(r'([a-zA-Zㄅ-ㄩㄚ-ㄦ˙ˊˇˋ]+)$', recognized_text)
+        current_word = match.group(1) if match else ""
         suggestions = self._get_recommendations(current_word)
         
         s_rects = []
