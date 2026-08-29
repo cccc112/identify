@@ -24,13 +24,14 @@ from core.coloring_manager import ColoringManager
 from core.color_picker import ColorPicker
 from core.face_tracker import FaceTracker
 from core.gaze_solver import GazeSolver
+from core.keyboard import GazeKeyboard
 
 
 # ─────────────────────────────────────────────────────────────────
 #  常數設定
 # ─────────────────────────────────────────────────────────────────
 W, H = 640, 480
-MODES        = ["digit", "letter", "symbol", "magic", "art", "train"]
+MODES        = ["digit", "letter", "symbol", "magic", "art", "type", "train"]
 MIN_BLOOM_RADIUS = 50
 PALETTES     = [
     ("Gold",    ( 50, 200, 255)),  # 橙金
@@ -373,6 +374,7 @@ def main():
     particles = ParticleSystem()
     mandala   = MagicMandala()
     coloring  = ColoringManager(canvas_w=W, canvas_h=H)
+    keyboard  = GazeKeyboard(W, H)
     color_picker = ColorPicker(W//2, H//2, radius=130)
     color_picker_active = False
     preview_color = None
@@ -845,6 +847,24 @@ def main():
                     angle = int(360 * prog)
                     cv2.ellipse(disp, (color_picker.cx, color_picker.cy), (38, 38),
                                 0, 0, angle, (200, 255, 200), 3, cv2.LINE_AA)
+
+        # ── 繪製 TYPE 模式的視線鍵盤 ────────────────────────
+        if mode_name == 'type' and not color_picker_active:
+            typed_key = keyboard.update_and_draw(disp, gaze_pt, is_blinking, curr_time)
+            if typed_key:
+                # 粒子特效
+                if gaze_pt:
+                    for _ in range(30):
+                        particles.spawn(gaze_pt[0], gaze_pt[1], color=(200, 255, 100), count=1)
+                        
+                if typed_key == 'SPACE':
+                    recognized_text += " "
+                elif typed_key == 'BKSP':
+                    recognized_text = recognized_text[:-1]
+                elif typed_key == 'CLEAR':
+                    recognized_text = ""
+                else:
+                    recognized_text += typed_key
 
 
 
