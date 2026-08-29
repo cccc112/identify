@@ -62,9 +62,16 @@ class GazeSolver:
             ry_y = get_y_ratio(lm[386], lm[374], lm[473])
             avg_y = (ly + ry_y) / 2.0
             
-            # X比例大約在 0.2 ~ 0.8，Y比例大約在 0.3 ~ 0.7
-            mapped_x = (avg_x - 0.25) / 0.5
-            mapped_y = (avg_y - 0.2) / 0.6
+            # 瞳孔在眼眶內的比例，置中時大約是 0.5
+            # X軸：(0.35 ~ 0.65) -> (0.0 ~ 1.0)
+            mapped_x = (avg_x - 0.35) / 0.30
+            
+            # Y軸：(0.35 ~ 0.65) -> (0.0 ~ 1.0)
+            mapped_y = (avg_y - 0.35) / 0.30
+            
+            # Y軸經常會感覺相反（往上變往下），如果發現反向，將它反轉：
+            mapped_y = 1.0 - mapped_y
+            
             raw_x = mapped_x * W
             raw_y = mapped_y * H
         else:
@@ -88,7 +95,9 @@ class GazeSolver:
             self.cursor_y = raw_y
             self.is_initialized = True
         else:
-            self.cursor_x = self.cursor_x * (1 - self.alpha) + raw_x * self.alpha
-            self.cursor_y = self.cursor_y * (1 - self.alpha) + raw_y * self.alpha
+            # 純眼球追蹤容易抖動，套用更強的平滑 (alpha 變小)
+            current_alpha = 0.1 if self.use_eye_only else self.alpha
+            self.cursor_x = self.cursor_x * (1 - current_alpha) + raw_x * current_alpha
+            self.cursor_y = self.cursor_y * (1 - current_alpha) + raw_y * current_alpha
 
         return int(self.cursor_x), int(self.cursor_y), blink_trigger, ear
