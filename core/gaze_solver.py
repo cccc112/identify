@@ -15,6 +15,7 @@ class GazeSolver:
         self.blink_threshold = 0.22
         self.is_blinking = False
         self.last_blink_time = 0
+        self.use_eye_only = False
 
     def update(self, face_landmarks, W, H):
         """
@@ -39,20 +40,43 @@ class GazeSolver:
                 self.last_blink_time = time.time()
         self.is_blinking = blink
 
-        # ── 2. 高穩定度頭部/視線追蹤 (Head Pointer) ──
-        # 單純用 WebCam 追蹤極小的瞳孔非常容易飄移或超出邊界。
-        # 無障礙 AAC 業界最標準的做法是「用鼻尖作為準心，眼睛負責眨眼」。
-        
-        nose_x = lm[1].x
-        nose_y = lm[1].y
-        
-        # 放大使用者的微小頭部動作，映射到全螢幕
-        # 假設臉部在畫面中間 0.3 ~ 0.7 的範圍內移動
-        mapped_x = (nose_x - 0.3) / 0.4
-        mapped_y = (nose_y - 0.3) / 0.4
-        
-        raw_x = mapped_x * W
-        raw_y = mapped_y * H
+        if self.use_eye_only:
+            # ── 2. 純眼球追蹤 (Pure Eye Tracking) ──
+            # 左眼外角 33, 內角 133
+            # 右眼內角 362, 外角 263
+            def get_ratio(inner, outer, iris):
+                w = outer.x - inner.x
+                rx = (iris.x - inner.x) / (w + 1e-6)
+                return rx
+                
+            lx = get_ratio(lm[133], lm[33], lm[468])
+            rx = get_ratio(lm[362], lm[263], lm[473])
+            avg_x = (lx + rx) / 2.0
+            
+            # Y軸用眼眶上下緣: 上 159, 下 145
+            def get_y_ratio(top, bottom, iris):
+                h = bottom.y - top.y
+                ry = (iris.y - top.y) / (h + 1e-6)
+                return ry
+            ly = get_y_ratio(lm[159], lm[145], lm[468])
+            ry_y = get_y_ratio(lm[386], lm[374], lm[473])
+            avg_y = (ly + ry_y) / 2.0
+            
+            # X比例大約在 0.2 ~ 0.8，Y比例大約在 0.3 ~ 0.7
+            mapped_x = (avg_x - 0.25) / 0.5
+            mapped_y = (avg_y - 0.2) / 0.6
+            raw_x = mapped_x * W
+            raw_y = mapped_y * H
+        else:
+            # ── 2. 高穩定度頭部/視線追蹤 (Head Pointer) ──
+            nose_x = lm[1].x
+            nose_y = lm[1].y
+            
+            # 放大使用者的微小頭部動作，映射到全螢幕
+            mapped_x = (nose_x - 0.3) / 0.4
+            mapped_y = (nose_y - 0.3) / 0.4
+            raw_x = mapped_x * W
+            raw_y = mapped_y * H
         
         # 邊界限制
         raw_x = max(0, min(W, raw_x))
