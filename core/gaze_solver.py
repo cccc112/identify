@@ -39,27 +39,39 @@ class GazeSolver:
                 self.last_blink_time = time.time()
         self.is_blinking = blink
 
-        # ── 2. 視線游標位置 (混合鼻尖與瞳孔偏移) ──
-        # 鼻尖
-        nose_x, nose_y = lm[1].x, lm[1].y
+        # ── 2. 純眼球追蹤 (Pure Eye Tracking) ──
+        # 左眼外角 33, 內角 133 (在畫面上因鏡像可能是反的)
+        l_inner = lm[133]
+        l_outer = lm[33]
+        l_iris  = lm[468]
         
-        # 瞳孔中心
-        l_iris = lm[468]
-        r_iris = lm[473]
-        iris_x = (l_iris.x + r_iris.x) / 2.0
-        iris_y = (l_iris.y + r_iris.y) / 2.0
+        # 右眼內角 362, 外角 263
+        r_inner = lm[362]
+        r_outer = lm[263]
+        r_iris  = lm[473]
+
+        # 計算瞳孔在眼眶中的相對 X, Y 比例
+        def get_ratio(inner, outer, iris):
+            w = outer.x - inner.x
+            h = outer.y - inner.y
+            rx = (iris.x - inner.x) / (w + 1e-6)
+            ry = (iris.y - inner.y) / (h + 1e-6)
+            return rx, ry
+            
+        lx, ly = get_ratio(l_inner, l_outer, l_iris)
+        rx, ry = get_ratio(r_inner, r_outer, r_iris)
         
-        # 將小範圍的頭部移動映射到全螢幕
-        # 假設使用者頭部在畫面中間 0.3 ~ 0.7 之間移動
-        mapped_x = (nose_x - 0.3) / 0.4
-        mapped_y = (nose_y - 0.3) / 0.4
+        # 平均雙眼的比例
+        avg_x = (lx + rx) / 2.0
         
-        # 加上眼球偏移量 (放大 5 倍讓眼動更明顯)
-        eye_offset_x = (iris_x - nose_x) * 5
-        eye_offset_y = (iris_y - nose_y) * 5
+        # 上下移動用額頭與鼻尖的相對位置輔助，因為眼皮會干擾 Y 軸
+        avg_y = (l_iris.y + r_iris.y)/2.0 - lm[1].y
         
-        raw_x = (mapped_x + eye_offset_x) * W
-        raw_y = (mapped_y + eye_offset_y) * H
+        # 映射到螢幕 (根據實測，瞳孔比例大約在 0.3 ~ 0.7 之間變動)
+        # X 軸放大
+        raw_x = (avg_x - 0.4) * 3.0 * W
+        # Y 軸放大
+        raw_y = (avg_y + 0.05) * 15.0 * H
         
         # 邊界限制
         raw_x = max(0, min(W, raw_x))

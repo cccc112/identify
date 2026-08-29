@@ -14,6 +14,7 @@ import numpy as np
 import time
 import math
 import random
+import os
 
 from core.hand_tracker import HandTracker
 from core.canvas import CanvasManager
@@ -216,15 +217,17 @@ def draw_ui(img, mode, palette_idx, thickness_idx, active_tool, gesture_name,
         btn_mode  = (PAD, PAD, 110, PAD + BTN_H)
         btn_ink   = (115, PAD, 205, PAD + BTN_H)
         btn_size  = (210, PAD, 285, PAD + BTN_H)
-        btn_tool  = (290, PAD, 395, PAD + BTN_H)
-        btn_next  = (W - 180, PAD, W - 95, PAD + BTN_H)
-        btn_clear = (W - 90, PAD, W - PAD, PAD + BTN_H)
+        btn_tool  = (290, PAD, 385, PAD + BTN_H)
+        btn_save  = (390, PAD, 465, PAD + BTN_H)
+        btn_next  = (470, PAD, 545, PAD + BTN_H)
+        btn_clear = (550, PAD, W - PAD, PAD + BTN_H)
         btn_back  = (-10, -10, -10, -10)
     else:
         btn_mode  = (PAD, PAD, 155, PAD + BTN_H)
         btn_ink   = (162, PAD, 280, PAD + BTN_H)
         btn_size  = (287, PAD, 375, PAD + BTN_H)
         btn_tool  = (-10, -10, -10, -10)
+        btn_save  = (-10, -10, -10, -10)
         btn_next  = (-10, -10, -10, -10)
         btn_back  = (W - 195, PAD, W - 105, PAD + BTN_H)
         btn_clear = (W - 98, PAD, W - PAD, PAD + BTN_H)
@@ -240,6 +243,7 @@ def draw_ui(img, mode, palette_idx, thickness_idx, active_tool, gesture_name,
     
     if mode == 'art':
         pill(img, btn_tool, bg=M3['surface'], alpha=0.65, border=M3['secondary'])
+        pill(img, btn_save, bg=M3['surface'], alpha=0.65, border=M3['success'])
         pill(img, btn_next, bg=M3['surface'], alpha=0.65, border=M3['secondary'])
     else:
         pill(img, btn_back, bg=(35, 35, 55),  alpha=0.65, border=M3['secondary'])
@@ -258,6 +262,7 @@ def draw_ui(img, mode, palette_idx, thickness_idx, active_tool, gesture_name,
     if mode == 'art':
         tool_label = 'BRUSH' if active_tool == 'brush' else 'BUCKET'
         label(img, f' {tool_label}', btn_tool[0]+4, btn_tool[1]+28, color=M3['secondary'], scale=0.52)
+        label(img, ' Save', btn_save[0]+4, btn_save[1]+28, color=M3['success'], scale=0.52)
         label(img, ' Next', btn_next[0]+4, btn_next[1]+28, color=M3['secondary'], scale=0.52)
     else:
         label(img, ' Undo', btn_back[0]+4, btn_back[1]+28, color=M3['secondary'], scale=0.52)
@@ -317,7 +322,7 @@ def draw_ui(img, mode, palette_idx, thickness_idx, active_tool, gesture_name,
     gaze_hovered = None
     
     btn_list = [(btn_mode, 'mode'), (btn_ink, 'ink'), (btn_size, 'size'),
-                (btn_tool, 'tool'), (btn_next, 'next'),
+                (btn_tool, 'tool'), (btn_save, 'save'), (btn_next, 'next'),
                 (btn_back, 'back'), (btn_clear, 'clear')]
                 
     if hover_pt:
@@ -788,6 +793,12 @@ def main():
                         canvas.line_thickness = THICKNESSES[thickness_idx]
                     elif hovered_btn == 'tool':
                         active_tool = 'bucket' if active_tool == 'brush' else 'brush'
+                    elif hovered_btn == 'save':
+                        timestamp = int(time.time() * 1000)
+                        save_path = os.path.join("C:\\hand", f"artwork_{timestamp}.jpg")
+                        cv2.imwrite(save_path, disp)
+                        last_recog_boxes = [(-1, -1, -1, -1, f"Saved!")]
+                        recog_box_expire = curr_time + 2.0
                     elif hovered_btn == 'next':
                         name = coloring.next_image()
                         canvas.clear()
@@ -863,6 +874,8 @@ def main():
                     recognized_text = recognized_text[:-1]
                 elif typed_key == 'CLEAR':
                     recognized_text = ""
+                elif typed_key == 'EXIT':
+                    mode_idx = 0
                 else:
                     recognized_text += typed_key
 

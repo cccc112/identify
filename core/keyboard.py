@@ -7,20 +7,20 @@ LAYOUTS = {
         ['Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P'],
         ['A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L'],
         ['Z', 'X', 'C', 'V', 'B', 'N', 'M'],
-        ['LANG', 'SPACE', 'BKSP', 'CLEAR']
+        ['LANG', 'SPACE', 'BKSP', 'CLEAR', 'EXIT']
     ],
     'NUM / SYM': [
         ['7', '8', '9', '+', '-'],
         ['4', '5', '6', '*', '/'],
         ['1', '2', '3', '(', ')'],
-        ['LANG', '0', '.', '=', 'BKSP']
+        ['LANG', '0', '.', '=', 'BKSP', 'EXIT']
     ],
     'ZHUYIN (注音)': [
         ['ㄅ','ㄉ','ˇ','ˋ','ㄓ','ˊ','˙','ㄚ','ㄞ','ㄢ'],
         ['ㄆ','ㄊ','ㄍ','ㄐ','ㄔ','ㄗ','ㄧ','ㄛ','ㄟ','ㄣ'],
         ['ㄇ','ㄋ','ㄎ','ㄑ','ㄕ','ㄘ','ㄨ','ㄜ','ㄠ','ㄤ'],
         ['ㄈ','ㄌ','ㄏ','ㄒ','ㄖ','ㄙ','ㄩ','ㄝ','ㄡ','ㄥ'],
-        ['LANG', 'SPACE', 'BKSP', 'CLEAR']
+        ['LANG', 'SPACE', 'BKSP', 'CLEAR', 'EXIT']
     ]
 }
 
@@ -52,8 +52,8 @@ class GazeKeyboard:
             # 若某些按鍵需要比較寬 (例如 SPACE)
             actual_row_w = 0
             for k in row:
-                if k in ('SPACE', 'LANG', 'BKSP', 'CLEAR'):
-                    actual_row_w += int(key_w * 1.8) + gap
+                if k in ('SPACE', 'LANG', 'BKSP', 'CLEAR', 'EXIT'):
+                    actual_row_w += int(key_w * 1.5) + gap
                 else:
                     actual_row_w += key_w + gap
             actual_row_w -= gap
@@ -62,7 +62,7 @@ class GazeKeyboard:
             cx = start_x
             
             for key in row:
-                kw = int(key_w * 1.8) if key in ('SPACE', 'LANG', 'BKSP', 'CLEAR') else key_w
+                kw = int(key_w * 1.5) if key in ('SPACE', 'LANG', 'BKSP', 'CLEAR', 'EXIT') else key_w
                 x1 = cx
                 x2 = cx + kw
                 y1 = start_y + r_idx * (key_h + gap)
@@ -109,6 +109,8 @@ class GazeKeyboard:
             
             if label in ('LANG', 'SPACE', 'BKSP', 'CLEAR'):
                 bg_col = (100, 180, 100) if is_hover else (40, 80, 50)
+            elif label == 'EXIT':
+                bg_col = (60, 60, 200) if is_hover else (40, 40, 120)
                 
             cv2.rectangle(img, (x1, y1), (x2, y2), bg_col, -1, cv2.LINE_AA)
             cv2.rectangle(img, (x1, y1), (x2, y2), (100, 100, 120), 1, cv2.LINE_AA)
