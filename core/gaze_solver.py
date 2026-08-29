@@ -65,8 +65,8 @@ class GazeSolver:
             # 瞳孔在眼眶內的比例，置中時大約是 0.5
             # 針對左右不好移動的問題，我們以 0.5 為中心，進行放大 (Sensitivity)
             # multiplier 越大，越容易碰到螢幕邊緣
-            SENSITIVITY_X = 4.0
-            SENSITIVITY_Y = 3.5
+            SENSITIVITY_X = 6.0
+            SENSITIVITY_Y = 5.0
             mapped_x = 0.5 + (avg_x - 0.5) * SENSITIVITY_X
             mapped_y = 0.5 + (avg_y - 0.45) * SENSITIVITY_Y # Y中心稍微偏上
             
@@ -97,8 +97,9 @@ class GazeSolver:
             self.cursor_y = raw_y
             self.is_initialized = True
         else:
-            # 純眼球追蹤容易抖動，套用更強的平滑 (alpha 變小)
-            current_alpha = 0.1 if self.use_eye_only else self.alpha
+            # 純眼球追蹤容易抖動，套用平滑
+            # 原本 alpha 設為 0.1 太慢，提升至 0.2 增加反應速度
+            current_alpha = 0.2 if self.use_eye_only else self.alpha
             self.cursor_x = self.cursor_x * (1 - current_alpha) + raw_x * current_alpha
             self.cursor_y = self.cursor_y * (1 - current_alpha) + raw_y * current_alpha
 

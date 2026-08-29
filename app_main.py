@@ -110,6 +110,8 @@ MODE_COLORS = {
     'symbol': ((55, 50, 38),   M3['tertiary']),
     'magic':  ((65, 35, 75),   M3['magic_col']),
     'art':    ((35, 60, 65),   M3['art_col']),
+    'type':   ((50, 50, 70),   (255, 200, 100)), # KEYBD
+    'train':  ((40, 40, 40),   (100, 100, 255)),
 }
 
 # ─────────────────────────────────────────────────────────────────
@@ -258,6 +260,7 @@ def draw_ui(img, mode, palette_idx, thickness_idx, active_tool, gesture_name,
     thick_val = THICKNESSES[thickness_idx]
     
     mode_label_str = mode.upper()[:3] if mode == 'art' else mode.upper()
+    if mode == 'type': mode_label_str = 'KEYBD'
 
     label(img, f' {mode_label_str}', btn_mode[0]+4, btn_mode[1]+28, color=mode_col, scale=0.52)
     label(img, f' {ink_name[:4]}',   btn_ink[0]+2,  btn_ink[1]+28, color=ink_bgr_color, scale=0.52)
@@ -303,39 +306,66 @@ def draw_ui(img, mode, palette_idx, thickness_idx, active_tool, gesture_name,
     label(img, gtext, chip_rect[0] + 14, chip_rect[1] + 28, color=gcol, scale=0.50)
 
     # ── 右側白板 (Notepad) ─────────────────────────────
-    # 原本在底部的文字框，改到右側大面積白板，支援自動換行顯示
-    panel_w = 320
-    panel_rect = (W - panel_w - PAD, PAD + BTN_H + 20, W - PAD, H - 115)
-    glass_rect(img, panel_rect, alpha=0.65, bg=(30, 30, 35), radius=16, border=M3['surface_hi'])
-    
-    # 標題
-    cv2.putText(img, "Notepad", (panel_rect[0] + 15, panel_rect[1] + 30),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.6, M3['secondary'], 1, cv2.LINE_AA)
-    cv2.line(img, (panel_rect[0]+10, panel_rect[1]+40), (panel_rect[2]-10, panel_rect[1]+40), M3['surface_hi'], 1)
-    
-    # 內文自動換行
-    from PIL import ImageFont, ImageDraw, Image
-    if text:
-        # 簡單換行邏輯 (每行約 15 個中文字 / 30 個英文字母)
-        lines = []
-        cur_line = ""
-        for char in text:
-            cur_line += char
-            # 中文寬，英文窄，這裡用簡單長度估算
-            if len(cur_line.encode('utf-8')) > 30:
-                lines.append(cur_line)
-                cur_line = ""
-        if cur_line:
-            lines.append(cur_line)
-            
-        # 保持最後幾行在畫面內
-        max_lines = (panel_rect[3] - panel_rect[1] - 60) // 35
-        display_lines = lines[-max_lines:]
+    # 原本在底部的文字框，改到右側延伸出的螢幕區域
+    # img.shape[1] 是延伸後的寬度 (W + 400)
+    full_w = img.shape[1]
+    if full_w > W:
+        panel_rect = (W + PAD, PAD, full_w - PAD, H - PAD)
+        glass_rect(img, panel_rect, alpha=0.1, bg=(20, 20, 25), radius=16, border=M3['surface_hi'])
         
-        y_offset = panel_rect[1] + 70
-        for line_str in display_lines:
-            label(img, line_str, panel_rect[0] + 15, y_offset, scale=0.8, color=M3['on_surface'], thick=2)
-            y_offset += 35
+        # 標題
+        cv2.putText(img, "Whiteboard", (panel_rect[0] + 20, panel_rect[1] + 35),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, M3['secondary'], 2, cv2.LINE_AA)
+        cv2.line(img, (panel_rect[0]+15, panel_rect[1]+50), (panel_rect[2]-15, panel_rect[1]+50), M3['surface_hi'], 1)
+        
+        # 使用 PIL 畫中文
+        from PIL import ImageFont, ImageDraw, Image
+        import numpy as np
+        
+        try:
+            font = ImageFont.truetype("msjh.ttc", 22)
+        except:
+            font = ImageFont.load_default()
+            
+        img_pil = Image.fromarray(img)
+        draw = ImageDraw.Draw(img_pil)
+        
+        if text:
+            # 簡單換行邏輯 (每行約 16 個中文字)
+            lines = []
+            cur_line = ""
+            for char in text:
+                cur_line += char
+                if len(cur_line.encode('utf-8')) > 36:
+                    lines.append(cur_line)
+                    cur_line = ""
+            if cur_line:
+                lines.append(cur_line)
+                
+            max_lines = (panel_rect[3] - panel_rect[1] - 80) // 35
+            display_lines = lines[-max_lines:]
+            
+            y_offset = panel_rect[1] + 70
+            for line_str in display_lines:
+                draw.text((panel_rect[0] + 20, y_offset), line_str, font=font, fill=(255, 255, 255))
+                y_offset += 35
+                
+        # 加一個簡單的 COPY 跟 EVALUTE 虛擬按鈕
+        btn_eval = (panel_rect[0] + 20, panel_rect[3] - 50, panel_rect[0] + 130, panel_rect[3] - 10)
+        pill(img_pil, btn_eval, bg=M3['primary'], alpha=0.8, border=(255,255,255))
+        draw.text((btn_eval[0] + 35, btn_eval[1] + 8), "EVAL = ", font=font, fill=(0,0,0))
+        
+        btn_copy = (panel_rect[2] - 110, panel_rect[3] - 50, panel_rect[2] - 20, panel_rect[3] - 10)
+        pill(img_pil, btn_copy, bg=M3['surface_hi'], alpha=0.8, border=(255,255,255))
+        draw.text((btn_copy[0] + 20, btn_copy[1] + 8), "CLEAR", font=font, fill=(255,255,255))
+        
+        img[:] = np.array(img_pil)
+        
+        # 註冊這兩個按鈕到 UI 回傳
+        # 但目前 btn_list 是在 draw_ui 外面，我們暫時先用固定座標在主迴圈判斷，或是把這兩個也加進 btn_list。
+        # 為了簡單，我將這兩個按鈕存入全域，主迴圈可以判定。
+        global notepad_btns
+        notepad_btns = {'eval': btn_eval, 'clear_text': btn_copy}
 
     # ── AR 數學解答浮卡 ──────────────────────────────────
     if ar_ans:
@@ -358,6 +388,9 @@ def draw_ui(img, mode, palette_idx, thickness_idx, active_tool, gesture_name,
                 (btn_tool, 'tool'), (btn_save, 'save'), (btn_next, 'next'),
                 (btn_back, 'back'), (btn_clear, 'clear'), (btn_track, 'track')]
                 
+    if 'notepad_btns' in globals() and notepad_btns:
+        btn_list.append((notepad_btns['eval'], 'eval'))
+        btn_list.append((notepad_btns['clear_text'], 'clear_text'))
     if hover_pt:
         for rect, name in btn_list:
             if is_in(hover_pt, rect):
@@ -472,7 +505,16 @@ def main():
             continue
 
         frame = cv2.flip(frame, 1)
-        results, disp = tracker.process_frame(frame, optimize_lighting=False)
+        
+        # 動態擴增畫布寬度 (加入右側白板空間 400px)
+        PANEL_W = 400
+        disp = np.zeros((H, W + PANEL_W, 3), dtype=np.uint8)
+        # 如果攝影機解析度不是 W,H (例如 640x480)，需要 resize 以防 crash
+        if frame.shape[:2] != (H, W):
+            frame = cv2.resize(frame, (W, H))
+        disp[:, :W] = frame
+        
+        results, _ = tracker.process_frame(frame, optimize_lighting=False)
         
         # ── 臉部/眼球追蹤 ──────────────────────────────────
         face_results = face_tracker.process_frame(frame)
@@ -832,6 +874,16 @@ def main():
                         recognized_text = ""
                         canvas.clear()
                         _recognized_path_cnt = 0
+                    elif hovered_btn == 'clear_text':
+                        recognized_text = ""
+                    elif hovered_btn == 'eval':
+                        try:
+                            # 評估 recognized_text 內的算式
+                            clean_expr = recognized_text.replace('=', '').replace(' ', '')
+                            ans = str(eval(clean_expr))
+                            recognized_text = f"{clean_expr} = {ans}"
+                        except Exception:
+                            recognized_text += " [Error]"
                     elif hovered_btn == 'back':
                         recognized_text = recognized_text[:-1]
                     elif hovered_btn in ('mode_left', 'mode_right', 'mode'):

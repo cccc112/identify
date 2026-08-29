@@ -7,19 +7,19 @@ LAYOUTS = {
         ['Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P'],
         ['A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L'],
         ['SHIFT', 'Z', 'X', 'C', 'V', 'B', 'N', 'M', 'BKSP'],
-        ['EN/中', ',', 'SPACE', '.', 'ENTER', 'EXIT']
+        ['EN/中', '?123', ',', 'SPACE', '.', 'ENTER', 'EXIT']
     ],
     'NUM / SYM': [
         ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'],
         ['@', '#', '$', '%', '&', '-', '+', '(', ')'],
         ['*', '"', "'", ':', ';', '!', '?', 'BKSP'],
-        ['EN/中', ',', 'SPACE', '.', 'ENTER', 'EXIT']
+        ['EN/中', '?123', ',', 'SPACE', '.', 'ENTER', 'EXIT']
     ],
     'ZHUYIN (注音)': [
         ['ㄅ','ㄉ','ˇ','ˋ','ㄓ','ˊ','˙','ㄚ','ㄞ','ㄢ'],
         ['ㄆ','ㄊ','ㄍ','ㄐ','ㄔ','ㄗ','ㄧ','ㄛ','ㄟ','ㄣ'],
         ['ㄇ','ㄋ','ㄎ','ㄑ','ㄕ','ㄘ','ㄨ','ㄜ','ㄠ','ㄤ', 'BKSP'],
-        ['EN/中', 'ㄈ', 'SPACE', 'ㄥ', 'ENTER', 'EXIT'] # Simplified for spacing, or standard:
+        ['EN/中', '?123', 'ㄈ', 'SPACE', 'ㄥ', 'ENTER', 'EXIT'] # Simplified for spacing, or standard:
     ]
 }
 
@@ -29,7 +29,7 @@ LAYOUTS['ZHUYIN (注音)'] = [
     ['ㄆ','ㄊ','ㄍ','ㄐ','ㄔ','ㄗ','ㄧ','ㄛ','ㄟ','ㄣ'],
     ['ㄇ','ㄋ','ㄎ','ㄑ','ㄕ','ㄘ','ㄨ','ㄜ','ㄠ','ㄤ'],
     ['ㄈ','ㄌ','ㄏ','ㄒ','ㄖ','ㄙ','ㄩ','ㄝ','ㄡ','ㄥ', 'BKSP'],
-    ['EN/中', ',', 'SPACE', '.', 'ENTER', 'EXIT']
+    ['EN/中', '?123', ',', 'SPACE', '.', 'ENTER', 'EXIT']
 ]
 
 class GazeKeyboard:
@@ -60,7 +60,7 @@ class GazeKeyboard:
             # 若某些按鍵需要比較寬 (例如 SPACE)
             actual_row_w = 0
             for k in row:
-                if k in ('SPACE', 'EN/中', 'BKSP', 'CLEAR', 'EXIT'):
+                if k in ('SPACE', 'EN/中', '?123', 'BKSP', 'CLEAR', 'EXIT'):
                     actual_row_w += int(key_w * 1.5) + gap
                 else:
                     actual_row_w += key_w + gap
@@ -70,7 +70,7 @@ class GazeKeyboard:
             cx = start_x
             
             for key in row:
-                kw = int(key_w * 1.5) if key in ('SPACE', 'EN/中', 'BKSP', 'CLEAR', 'EXIT') else key_w
+                kw = int(key_w * 1.5) if key in ('SPACE', 'EN/中', '?123', 'BKSP', 'CLEAR', 'EXIT') else key_w
                 x1 = cx
                 x2 = cx + kw
                 y1 = start_y + r_idx * (key_h + gap)
@@ -191,7 +191,7 @@ class GazeKeyboard:
             bg_col = (80, 150, 255) if is_hover else (50, 60, 70)
             text_col = (255, 255, 255)
             
-            if label in ('EN/中', 'SPACE', 'BKSP', 'CLEAR'):
+            if label in ('EN/中', '?123', 'SPACE', 'BKSP', 'CLEAR'):
                 bg_col = (100, 180, 100) if is_hover else (40, 80, 50)
             elif label == 'EXIT':
                 bg_col = (60, 60, 200) if is_hover else (40, 40, 120)
@@ -199,13 +199,14 @@ class GazeKeyboard:
             cv2.rectangle(img, (x1, y1), (x2, y2), bg_col, -1, cv2.LINE_AA)
             cv2.rectangle(img, (x1, y1), (x2, y2), (100, 100, 120), 1, cv2.LINE_AA)
             
-            # 文字置中
-            font = cv2.FONT_HERSHEY_SIMPLEX
-            scale = 0.6 if len(label) > 1 else 0.7
-            (tw, th), _ = cv2.getTextSize(label, font, scale, 1)
-            tx = x1 + (x2 - x1 - tw) // 2
-            ty = y1 + (y2 - y1 + th) // 2
-            cv2.putText(img, label, (tx, ty), font, scale, text_col, 1, cv2.LINE_AA)
+            # 暫存文字以批次繪製 (避免過多 PIL/numpy 轉換)
+            if not hasattr(self, 'texts_to_draw'):
+                self.texts_to_draw = []
+            
+            # 使用統一大小的字體
+            tx = x1 + (x2 - x1) // 2
+            ty = y1 + (y2 - y1) // 2
+            self.texts_to_draw.append((label, (tx, ty), text_col, True)) # True = center align
             
             # 畫進度條
             if is_hover and current_hover:
@@ -225,13 +226,9 @@ class GazeKeyboard:
             cv2.rectangle(img, (x1, y1), (x2, y2), bg_col, -1, cv2.LINE_AA)
             cv2.rectangle(img, (x1, y1), (x2, y2), (150, 150, 180), 1, cv2.LINE_AA)
             
-            font = cv2.FONT_HERSHEY_SIMPLEX
-            # 若為中文，建議換能支援中文的字體 (此處先用簡化的 putText 或仰賴系統)
-            # 在 OpenCV 原生 putText 不支援中文，但我們還是先丟進去
-            (tw, th), _ = cv2.getTextSize(label, font, 0.6, 1)
-            tx = x1 + (x2 - x1 - tw) // 2
-            ty = y1 + (y2 - y1 + th) // 2
-            cv2.putText(img, label, (tx, ty), font, 0.6, (255, 255, 255), 1, cv2.LINE_AA)
+            tx = x1 + (x2 - x1) // 2
+            ty = y1 + (y2 - y1) // 2
+            self.texts_to_draw.append((label, (tx, ty), (255, 255, 255), True))
             
             if is_hover:
                 prog = min(1.0, (curr_time - self.hover_start) / 0.8)
@@ -241,10 +238,45 @@ class GazeKeyboard:
                     triggered_key = f"SUG_{label}"
                     self.hover_start = curr_time + 0.5
 
+        # 批次使用 PIL 畫中文
+        if self.texts_to_draw:
+            from PIL import ImageFont, ImageDraw, Image
+            import numpy as np
+            try:
+                font = ImageFont.truetype("msjh.ttc", 20)
+            except:
+                font = ImageFont.load_default()
+            
+            img_pil = Image.fromarray(img)
+            draw = ImageDraw.Draw(img_pil)
+            for text, pos, color, center in self.texts_to_draw:
+                # anchor='mm' 讓文字置中於 pos
+                if hasattr(font, 'getbbox'):
+                    draw.text(pos, text, font=font, fill=color, anchor="mm")
+                else:
+                    # fallback
+                    draw.text((pos[0]-10, pos[1]-10), text, font=font, fill=color)
+            img[:] = np.array(img_pil)
+            self.texts_to_draw.clear()
+
         # 處理特殊功能鍵
         if triggered_key == 'EN/中':
-            self.layout_idx = (self.layout_idx + 1) % len(self.layout_names)
+            # 只在 EN 和 ZHUYIN 之間切換
+            try:
+                self.layout_idx = self.layout_names.index('ZHUYIN (注音)') if self.layout_names[self.layout_idx] != 'ZHUYIN (注音)' else self.layout_names.index('EN')
+            except ValueError:
+                self.layout_idx = 0
             self._build_layout()
-            return None # 攔截不輸出
+            return None
             
+        if triggered_key == '?123':
+            try:
+                num_idx = self.layout_names.index('NUM / SYM')
+                en_idx = self.layout_names.index('EN')
+                self.layout_idx = en_idx if self.layout_idx == num_idx else num_idx
+            except ValueError:
+                pass
+            self._build_layout()
+            return None
+
         return triggered_key
