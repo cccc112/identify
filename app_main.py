@@ -352,11 +352,17 @@ def draw_ui(img, mode, palette_idx, thickness_idx, active_tool, gesture_name,
                 
         # 加一個簡單的 COPY 跟 EVALUTE 虛擬按鈕
         btn_eval = (panel_rect[0] + 20, panel_rect[3] - 50, panel_rect[0] + 130, panel_rect[3] - 10)
-        pill(img_pil, btn_eval, bg=M3['primary'], alpha=0.8, border=(255,255,255))
-        draw.text((btn_eval[0] + 35, btn_eval[1] + 8), "EVAL = ", font=font, fill=(0,0,0))
-        
         btn_copy = (panel_rect[2] - 110, panel_rect[3] - 50, panel_rect[2] - 20, panel_rect[3] - 10)
-        pill(img_pil, btn_copy, bg=M3['surface_hi'], alpha=0.8, border=(255,255,255))
+        
+        # Pill 是對 cv2 的 numpy 陣列操作
+        img_np = np.array(img_pil)
+        pill(img_np, btn_eval, bg=M3['primary'], alpha=0.8, border=(255,255,255))
+        pill(img_np, btn_copy, bg=M3['surface_hi'], alpha=0.8, border=(255,255,255))
+        
+        # 轉回 PIL 畫文字
+        img_pil = Image.fromarray(img_np)
+        draw = ImageDraw.Draw(img_pil)
+        draw.text((btn_eval[0] + 35, btn_eval[1] + 8), "EVAL = ", font=font, fill=(0,0,0))
         draw.text((btn_copy[0] + 20, btn_copy[1] + 8), "CLEAR", font=font, fill=(255,255,255))
         
         img[:] = np.array(img_pil)
@@ -394,7 +400,7 @@ def draw_ui(img, mode, palette_idx, thickness_idx, active_tool, gesture_name,
     if hover_pt:
         for rect, name in btn_list:
             if is_in(hover_pt, rect):
-                if name in ('mode', 'track'):
+                if name in ('mode', 'track', 'size'):
                     cx = (rect[0] + rect[2]) // 2
                     if hover_pt[0] < cx:
                         hovered = f"{name}_left"
@@ -414,7 +420,7 @@ def draw_ui(img, mode, palette_idx, thickness_idx, active_tool, gesture_name,
     if gaze_pt:
         for rect, name in btn_list:
             if is_in(gaze_pt, rect):
-                if name in ('mode', 'track'):
+                if name in ('mode', 'track', 'size'):
                     cx = (rect[0] + rect[2]) // 2
                     if gaze_pt[0] < cx:
                         gaze_hovered = f"{name}_left"
@@ -616,6 +622,17 @@ def main():
                     cv2.imwrite(fname, save_img)
                     last_recog_boxes = [(-1, -1, -1, -1, f"Saved! {os.path.basename(fname)}")]
                     recog_box_expire = curr_time + 2.5
+                elif mode_name == 'magic':
+                    # ── Magic 模式：握拳 → 爆發所有動物與粒子 ──────
+                    _fist_submit = False
+                    for a in animals.animals:
+                        for _ in range(4):
+                            particles.spawn(a['x'], a['y'], color=(255, random.randint(100, 200), 255), count=3)
+                    animals.animals.clear()
+                    # 本身也爆發一波
+                    for _ in range(50):
+                        particles.spawn(x_idx, y_idx, color=ink_bgr, count=1)
+                    canvas.clear()
                 elif not canvas.has_content() and recognized_text:
                     # ── 空畫布握拳 → 快速清除輸出文字 ─────────
                     recognized_text = ""
@@ -712,9 +729,11 @@ def main():
             rock_triggered   = False
 
         # ── 粒子更新 ──────────────────────────────────────
-        particles.update_and_draw(disp)
-        neural_bloom.update_and_draw(disp)
-        animals.update_and_draw(disp)
+        # 把特效限制在攝影機畫面內 (避免跑到右側 Whiteboard)
+        disp_view = disp[:, :W]
+        particles.update_and_draw(disp_view)
+        neural_bloom.update_and_draw(disp_view)
+        animals.update_and_draw(disp_view)
 
         # ── 填色底圖 AR 疊加 ─────────────────────────────
         if mode_name == 'art' and coloring.has_image:
@@ -894,8 +913,9 @@ def main():
                     elif hovered_btn == 'ink':
                         color_picker_active = not color_picker_active
                         color_hover_start = curr_time
-                    elif hovered_btn == 'size':
-                        thickness_idx = (thickness_idx + 1) % len(THICKNESSES)
+                    elif hovered_btn in ('size_left', 'size_right', 'size'):
+                        step = -1 if hovered_btn == 'size_left' else 1
+                        thickness_idx = (thickness_idx + step) % len(THICKNESSES)
                         canvas.line_thickness = THICKNESSES[thickness_idx]
                     elif hovered_btn == 'tool':
                         active_tool = 'bucket' if active_tool == 'brush' else 'brush'
@@ -1043,9 +1063,20 @@ def main():
         # ── 筆跡 AR 疊加 (著色) ───────────────────────────
         draw_lyr = canvas.drawing_layer
         white_mask = cv2.inRange(draw_lyr, (200, 200, 200), (255, 255, 255))
+        
         colored_lyr = np.zeros_like(draw_lyr)
         colored_lyr[white_mask > 0] = ink_bgr
-        disp[white_mask > 0] = colored_lyr[white_mask > 0]
+        
+        if mode_name == 'magic':
+            # 發光疊加
+            glow = cv2.GaussianBlur(colored_lyr, (25, 25), 0)
+            # 因為 disp 包含右側白板，而 draw_lyr 只有 W 的寬度，我們必須切片
+            disp_view = disp[:, :W]
+            cv2.addWeighted(disp_view, 1.0, glow, 0.8, 0, disp_view)
+            disp_view[white_mask > 0] = (255, 255, 255) # 亮白核心
+        else:
+            disp_view = disp[:, :W]
+            disp_view[white_mask > 0] = colored_lyr[white_mask > 0]
 
         # 即時筆跡（當幀尚未 commit 的點）
         canvas.draw_current_stroke(disp, ink_color=ink_bgr)
