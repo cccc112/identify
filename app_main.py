@@ -443,12 +443,13 @@ def main():
         ear_val = 1.0
         if face_results.multi_face_landmarks:
             gx, gy, is_blinking, ear_val = gaze_solver.update(face_results.multi_face_landmarks[0], W, H)
-            gaze_pt = (gx, gy)
-            # 畫出視線游標 (科幻光圈)
-            cv2.circle(disp, gaze_pt, 12, (255, 150, 0), 2, cv2.LINE_AA)
-            cv2.circle(disp, gaze_pt, 4, (0, 255, 255), -1, cv2.LINE_AA)
-            # 顯示 EAR 用於除錯
-            # cv2.putText(disp, f"EAR: {ear_val:.2f}", (gx+15, gy), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+            
+            # 只在 TYPE 模式啟用並顯示視線游標，避免干擾手部畫畫
+            if MODES[mode_idx] == 'type':
+                gaze_pt = (gx, gy)
+                # 畫出視線游標 (科幻光圈)
+                cv2.circle(disp, gaze_pt, 12, (255, 150, 0), 2, cv2.LINE_AA)
+                cv2.circle(disp, gaze_pt, 4, (0, 255, 255), -1, cv2.LINE_AA)
 
         curr_time   = time.time()
         mode_name   = MODES[mode_idx]
