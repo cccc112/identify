@@ -22,6 +22,8 @@ from core.magic_effects import ParticleSystem, MagicMandala, NeuralBloom, Animal
 from core.gesture_solver import GestureStateMachine, get_palm_center, safe_math_eval
 from core.coloring_manager import ColoringManager
 from core.color_picker import ColorPicker
+from core.face_tracker import FaceTracker
+from core.gaze_solver import GazeSolver
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -200,10 +202,10 @@ def is_in(pt, rect):
 # ─────────────────────────────────────────────────────────────────
 
 def draw_ui(img, mode, palette_idx, thickness_idx, active_tool, gesture_name,
-            text, hover_pt, last_btn, hover_prog, ar_ans=None):
+            text, hover_pt, last_btn, hover_prog, ar_ans=None, gaze_pt=None):
     """
     Material You 風格 UI。
-    回傳: hovered_btn_name | None
+    回傳: (hand_hovered_btn, gaze_hovered_btn)
     """
     PAD   = 10
     BTN_H = 44   # pill 高度
@@ -311,10 +313,14 @@ def draw_ui(img, mode, palette_idx, thickness_idx, active_tool, gesture_name,
 
     # ── Hover 高亮與進度弧 ───────────────────────────────
     hovered = None
+    gaze_hovered = None
+    
+    btn_list = [(btn_mode, 'mode'), (btn_ink, 'ink'), (btn_size, 'size'),
+                (btn_tool, 'tool'), (btn_next, 'next'),
+                (btn_back, 'back'), (btn_clear, 'clear')]
+                
     if hover_pt:
-        for rect, name in [(btn_mode, 'mode'), (btn_ink, 'ink'), (btn_size, 'size'),
-                           (btn_tool, 'tool'), (btn_next, 'next'),
-                           (btn_back, 'back'), (btn_clear, 'clear')]:
+        for rect, name in btn_list:
             if is_in(hover_pt, rect):
                 hovered = name
                 if name == last_btn and hover_prog > 0:
@@ -326,7 +332,15 @@ def draw_ui(img, mode, palette_idx, thickness_idx, active_tool, gesture_name,
                               color=M3['primary'])
                 break
 
-    return hovered
+    if gaze_pt:
+        for rect, name in btn_list:
+            if is_in(gaze_pt, rect):
+                gaze_hovered = name
+                # 視線游標如果在按鈕上，加一個光暈
+                cv2.rectangle(img, rect[:2], rect[2:], (255, 200, 100), 1, cv2.LINE_AA)
+                break
+
+    return hovered, gaze_hovered
 
 
 
@@ -351,6 +365,9 @@ def main():
         min_hand_detection_confidence=0.5,
         min_tracking_confidence=0.45
     )
+    face_tracker = FaceTracker()
+    gaze_solver  = GazeSolver()
+    
     canvas    = CanvasManager(width=W, height=H, line_thickness=7)
     model_mgr = ModelManager()
     particles = ParticleSystem()
@@ -398,6 +415,20 @@ def main():
 
         frame = cv2.flip(frame, 1)
         results, disp = tracker.process_frame(frame, optimize_lighting=False)
+        
+        # ── 臉部/眼球追蹤 ──────────────────────────────────
+        face_results = face_tracker.process_frame(frame)
+        gaze_pt = None
+        is_blinking = False
+        ear_val = 1.0
+        if face_results.multi_face_landmarks:
+            gx, gy, is_blinking, ear_val = gaze_solver.update(face_results.multi_face_landmarks[0], W, H)
+            gaze_pt = (gx, gy)
+            # 畫出視線游標 (科幻光圈)
+            cv2.circle(disp, gaze_pt, 12, (255, 150, 0), 2, cv2.LINE_AA)
+            cv2.circle(disp, gaze_pt, 4, (0, 255, 255), -1, cv2.LINE_AA)
+            # 顯示 EAR 用於除錯
+            # cv2.putText(disp, f"EAR: {ear_val:.2f}", (gx+15, gy), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
 
         curr_time   = time.time()
         mode_name   = MODES[mode_idx]
@@ -720,11 +751,17 @@ def main():
         elif ar_answer and curr_time >= ar_answer[1]:
             ar_answer = None
 
-        hovered_btn = draw_ui(
+        hovered_btn, gaze_hovered_btn = draw_ui(
             disp, mode_name, palette_idx, thickness_idx, active_tool, gesture_name,
             recognized_text, hover_point, last_hovered_btn,
-            hover_progress, ar_ans=ar_ans_display
+            hover_progress, ar_ans=ar_ans_display, gaze_pt=gaze_pt
         )
+        
+        # ── Blink 觸發 UI ─────────────────────────────────
+        if is_blinking and gaze_hovered_btn and (curr_time - btn_cooldown > 1.0):
+            hovered_btn = gaze_hovered_btn # 模擬成按鈕被按下
+            hover_start_time = 0.0 # bypass hover time check
+            last_hovered_btn = hovered_btn
 
         # ── Hover 按鈕觸發 ────────────────────────────────
         if hovered_btn and not is_drawing:
@@ -767,27 +804,32 @@ def main():
         if color_picker_active:
             color_picker.draw(disp)
             # 提示文字
-            cv2.putText(disp, "Hover 0.8s to select, THUMB to cancel", (80, H - 40), 
-                        cv2.FONT_HERSHEY_DUPLEX, 0.7, (200, 255, 200), 2, cv2.LINE_AA)
-            if hover_point:
-                col = color_picker.get_color(hover_point[0], hover_point[1])
+            cv2.putText(disp, "Hover 0.8s or Blink to select, THUMB to cancel", (60, H - 40), 
+                        cv2.FONT_HERSHEY_DUPLEX, 0.6, (200, 255, 200), 1, cv2.LINE_AA)
+            # 允許視線游標預覽與選擇
+            active_pt = hover_point
+            if gaze_pt and color_picker.get_color(gaze_pt[0], gaze_pt[1]):
+                active_pt = gaze_pt
+                
+            if active_pt:
+                col = color_picker.get_color(active_pt[0], active_pt[1])
                 if col is not None:
                     preview_color = col
                     if color_hover_pt:
-                        dx = hover_point[0] - color_hover_pt[0]
-                        dy = hover_point[1] - color_hover_pt[1]
-                        if math.sqrt(dx*dx + dy*dy) < 5:
-                            if curr_time - color_hover_start > 0.8:
-                                # 自動選取！
+                        dx = active_pt[0] - color_hover_pt[0]
+                        dy = active_pt[1] - color_hover_pt[1]
+                        if math.sqrt(dx*dx + dy*dy) < 8:
+                            if curr_time - color_hover_start > 0.8 or (is_blinking and active_pt == gaze_pt):
+                                # 自動選取 或 眨眼選取！
                                 PALETTES[palette_idx] = ("Custom", preview_color)
                                 color_picker_active = False
                                 _fist_submit = False
                                 color_hover_start = curr_time # reset
                         else:
-                            color_hover_pt = hover_point
+                            color_hover_pt = active_pt
                             color_hover_start = curr_time
                     else:
-                        color_hover_pt = hover_point
+                        color_hover_pt = active_pt
                         color_hover_start = curr_time
                 else:
                     color_hover_pt = None
@@ -848,6 +890,7 @@ def main():
             break
 
     cap.release()
+    face_tracker.close()
     cv2.destroyAllWindows()
 
 
