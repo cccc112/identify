@@ -53,18 +53,24 @@ class ModelManager:
             print(f"[警告] 找不到符號模型: {self.symbol_model_path}")
 
     def preprocess_roi(self, roi, mode):
-        """將切下來的筆跡區塊轉換為對應模型所需的格式"""
+        """將切下來的筆跡區塊轉換為對應模型所需的格式，先補成正方形以維持比例"""
+        h, w = roi.shape[:2]
+        size = max(h, w)
+        pad_h = (size - h) // 2
+        pad_w = (size - w) // 2
+        # roi 是黑底白線，用黑邊填充
+        roi_square = cv2.copyMakeBorder(roi, pad_h, size - h - pad_h, pad_w, size - w - pad_w, cv2.BORDER_CONSTANT, value=0)
+
         if mode == "digit":
             # 28x28x1 灰階
-            roi_resized = cv2.resize(roi, (28, 28))
+            roi_resized = cv2.resize(roi_square, (28, 28))
             normalized = roi_resized / 255.0
             reshaped = normalized.reshape(1, 28, 28, 1)
             return reshaped
         else:
             # letter 與 symbol 都是 64x64x3
             # 根據原版 preprocess_image: 灰階 -> 反轉(bitwise_not) -> resize -> 轉BGR -> 正規化
-            # 原本的 roi 已經是灰階 (0是黑底, 白線條)
-            roi_not = cv2.bitwise_not(roi) # 反轉變成白底黑線條 (與原始模型一致)
+            roi_not = cv2.bitwise_not(roi_square) # 反轉變成白底黑線條 (與原始模型一致)
             roi_resized = cv2.resize(roi_not, (64, 64))
             roi_bgr = cv2.cvtColor(roi_resized, cv2.COLOR_GRAY2BGR)
             normalized = roi_bgr / 255.0
