@@ -32,7 +32,7 @@ from core.keyboard import GazeKeyboard
 #  常數設定
 # ─────────────────────────────────────────────────────────────────
 W, H = 640, 480
-MODES        = ["digit", "letter", "symbol", "magic", "art", "type", "train"]
+MODES        = ["digit", "letter", "symbol", "calc", "magic", "art", "type", "train"]
 MIN_BLOOM_RADIUS = 50
 PALETTES     = [
     ("Gold",    ( 50, 200, 255)),  # 橙金
@@ -206,7 +206,7 @@ def is_in(pt, rect):
 # ─────────────────────────────────────────────────────────────────
 
 def draw_ui(img, mode, palette_idx, thickness_idx, active_tool, gesture_name,
-            text, hover_pt, last_btn, hover_prog, ar_ans=None, gaze_pt=None, track_mode_str='HAND'):
+            text, hover_pt, last_btn, hover_prog, ar_ans=None, gaze_pt=None, track_mode_str='HAND', active_menu=None):
     """
     Material You 風格 UI。
     回傳: (hand_hovered_btn, gaze_hovered_btn)
@@ -237,7 +237,8 @@ def draw_ui(img, mode, palette_idx, thickness_idx, active_tool, gesture_name,
         btn_back  = (W - 195, PAD, W - 105, PAD + BTN_H)
         btn_clear = (W - 98, PAD, W - PAD, PAD + BTN_H)
         if mode == 'train':
-            btn_save = (382, PAD, 490, PAD + BTN_H) # We will call it RETRAIN but use btn_save variable for hitboxes
+            # Use btn_save variable for the RETRAIN button, shifted left to avoid DEL button
+            btn_save = (382, PAD, 440, PAD + BTN_H)
 
     mode_bg, mode_col = MODE_COLORS.get(mode, (M3['surface'], M3['primary']))
     ink_bgr_color     = PALETTES[palette_idx][1]  # 取得目前墨水色
@@ -293,7 +294,7 @@ def draw_ui(img, mode, palette_idx, thickness_idx, active_tool, gesture_name,
     # ── 手勢狀態 badge（右下角 pill chip）────────────────
     gesture_info = {
         'draw':      (M3['success'],   'DRAW ✏'),
-        'hover':     (M3['secondary'], 'HOVER'),
+        'hover':     (M3['secondary'], 'AIM'),
         'palm_open': (M3['magic_col'], 'MAGIC ✋'),
         'rock':      (M3['error'],     'CAST  '),
         'fist':      (M3['tertiary'],  'SUBMIT ✊'),
@@ -380,38 +381,49 @@ def draw_ui(img, mode, palette_idx, thickness_idx, active_tool, gesture_name,
                 (btn_back, 'back'), (btn_clear, 'clear'), (btn_track, 'track')]
                 
 
+    # ── 繪製 Dropdown Menus ──────────────────────────────
+    if active_menu:
+        items = []
+        parent_rect = None
+        if active_menu == 'mode':
+            items = [(m.upper(), i) for i, m in enumerate(MODES)]
+            parent_rect = btn_mode
+        elif active_menu == 'ink':
+            items = [(p[0], i) for i, p in enumerate(PALETTES)]
+            parent_rect = btn_ink
+        elif active_menu == 'size':
+            items = [(f"{t}px", i) for i, t in enumerate(THICKNESSES)]
+            parent_rect = btn_size
+        elif active_menu == 'track':
+            items = [(t, i) for i, t in enumerate(TRACK_MODES)]
+            parent_rect = btn_track
+            
+        if items and parent_rect:
+            mx1, my1, mx2, my2 = parent_rect
+            menu_w = max(140, mx2 - mx1)
+            for list_i, (label_str, val) in enumerate(items):
+                item_y1 = my2 + 5 + list_i * (BTN_H + 5)
+                item_y2 = item_y1 + BTN_H
+                rect = (mx1, item_y1, mx1 + menu_w, item_y2)
+                pill(img, rect, bg=M3['surface_hi'], alpha=0.95, border=M3['primary'])
+                label(img, label_str, mx1 + 10, item_y1 + 28, color=M3['primary'], scale=0.52)
+                btn_list.append((rect, f"menu_{active_menu}_{val}"))
+
     if hover_pt:
-        for rect, name in btn_list:
+        for rect, name in reversed(btn_list): # reversed so menus (drawn last) take priority
             if is_in(hover_pt, rect):
-                if name in ('mode', 'track', 'size'):
-                    cx = (rect[0] + rect[2]) // 2
-                    if hover_pt[0] < cx:
-                        hovered = f"{name}_left"
-                    else:
-                        hovered = f"{name}_right"
-                else:
-                    hovered = name
+                hovered = name
+                # Highlight menu item or parent button differently to avoid glitching, but for now simple border:
                 if hovered == last_btn and hover_prog > 0:
-                    # 亮邊框高亮
-                    cv2.rectangle(img, rect[:2], rect[2:],
-                                  M3['on_surface'], 2, cv2.LINE_AA)
+                    cv2.rectangle(img, rect[:2], rect[2:], M3['on_surface'], 2, cv2.LINE_AA)
                     hcx = (rect[0] + rect[2]) // 2
-                    hover_arc(img, hcx, rect[3] + 14, 10, hover_prog,
-                              color=M3['primary'])
+                    hover_arc(img, hcx, rect[3] + 14, 10, hover_prog, color=M3['primary'])
                 break
 
     if gaze_pt:
-        for rect, name in btn_list:
+        for rect, name in reversed(btn_list):
             if is_in(gaze_pt, rect):
-                if name in ('mode', 'track', 'size'):
-                    cx = (rect[0] + rect[2]) // 2
-                    if gaze_pt[0] < cx:
-                        gaze_hovered = f"{name}_left"
-                    else:
-                        gaze_hovered = f"{name}_right"
-                else:
-                    gaze_hovered = name
-                # 視線游標如果在按鈕上，加一個光暈
+                gaze_hovered = name
                 cv2.rectangle(img, rect[:2], rect[2:], (255, 200, 100), 1, cv2.LINE_AA)
                 break
 
@@ -456,8 +468,9 @@ def main():
     color_hover_start = 0.0
     color_hover_start = 0.0
 
-    TRACK_MODES = ['HAND', 'HEAD', 'EYE']
+    TRACK_MODES = ['HAND', 'HEAD']
     track_mode_idx = 0 # 預設為手部
+    active_menu = None
 
     mode_idx       = 0
     palette_idx    = 0
@@ -858,7 +871,7 @@ def main():
             disp, mode_name, palette_idx, thickness_idx, active_tool, gesture_name,
             recognized_text, hover_point, last_hovered_btn,
             hover_progress, ar_ans=ar_ans_display, gaze_pt=gaze_pt,
-            track_mode_str=TRACK_MODES[track_mode_idx]
+            track_mode_str=TRACK_MODES[track_mode_idx], active_menu=active_menu
         )
         
         # ── Blink 觸發 UI ─────────────────────────────────
@@ -870,51 +883,55 @@ def main():
         # ── Hover 按鈕觸發 ────────────────────────────────
         if hovered_btn and not is_drawing:
             if hovered_btn == last_hovered_btn:
-                if (curr_time - hover_start_time > 1.0 and
+                req_time = 0.6 if hovered_btn.startswith('menu_') else 1.0
+                if (curr_time - hover_start_time > req_time and
                         curr_time - btn_cooldown > 0.8):
+                    
                     if hovered_btn == 'clear':
                         recognized_text = ""
                         canvas.clear()
                         _recognized_path_cnt = 0
+                        active_menu = None
 
                     elif hovered_btn == 'back':
                         recognized_text = recognized_text[:-1]
-                    elif hovered_btn in ('mode_left', 'mode_right', 'mode'):
-                        step = -1 if hovered_btn == 'mode_left' else 1
-                        mode_idx = (mode_idx + step) % len(MODES)
+                        active_menu = None
+                        
+                    # Dropdown Menu Toggles
+                    elif hovered_btn in ('mode', 'size', 'track'):
+                        active_menu = hovered_btn if active_menu != hovered_btn else None
+                    
+                    # Dropdown Menu Selections
+                    elif hovered_btn.startswith('menu_mode_'):
+                        mode_idx = int(hovered_btn.split('_')[-1])
                         canvas.clear()
                         _recognized_path_cnt = 0
-                    elif hovered_btn == 'ink':
-                        color_picker_active = not color_picker_active
-                        color_hover_start = curr_time
-                    elif hovered_btn in ('size_left', 'size_right', 'size'):
-                        step = -1 if hovered_btn == 'size_left' else 1
-                        thickness_idx = (thickness_idx + step) % len(THICKNESSES)
+                        active_menu = None
+                    elif hovered_btn.startswith('menu_size_'):
+                        thickness_idx = int(hovered_btn.split('_')[-1])
                         canvas.line_thickness = THICKNESSES[thickness_idx]
-                    elif hovered_btn == 'tool':
-                        active_tool = 'bucket' if active_tool == 'brush' else 'brush'
-                    elif hovered_btn in ('track_left', 'track_right', 'track'):
-                        step = -1 if hovered_btn == 'track_left' else 1
-                        track_mode_idx = (track_mode_idx + step) % len(TRACK_MODES)
+                        active_menu = None
+                    elif hovered_btn.startswith('menu_track_'):
+                        track_mode_idx = int(hovered_btn.split('_')[-1])
                         tm = TRACK_MODES[track_mode_idx]
-                        if tm == 'EYE':
-                            gaze_solver.use_eye_only = True
-                        else:
+                        if tm == 'HEAD':
                             gaze_solver.use_eye_only = False
                         
-                        # 自動綁定應用場景：
-                        if tm in ('HEAD', 'EYE') and mode_name != 'type':
+                        if tm in ('HEAD',) and mode_name != 'type':
                             try:
                                 mode_idx = MODES.index('type')
                             except ValueError:
                                 pass
-                            canvas.clear()
-                        elif tm == 'HAND' and mode_name == 'type':
-                            try:
-                                mode_idx = MODES.index('draw')
-                            except ValueError:
-                                pass
-                            canvas.clear()
+                        canvas.clear()
+                        active_menu = None
+                        
+                    elif hovered_btn == 'ink':
+                        color_picker_active = not color_picker_active
+                        color_hover_start = curr_time
+                        active_menu = None
+                    elif hovered_btn == 'tool':
+                        active_tool = 'bucket' if active_tool == 'brush' else 'brush'
+                        active_menu = None
                     elif hovered_btn == 'save':
                         if mode_name == 'train':
                             import subprocess
@@ -927,9 +944,12 @@ def main():
                             cv2.imwrite(save_path, disp)
                             last_recog_boxes = [(-1, -1, -1, -1, f"Saved!")]
                             recog_box_expire = curr_time + 2.0
+                        active_menu = None
                     elif hovered_btn == 'next':
                         name = coloring.next_image()
                         canvas.clear()
+                        _recognized_path_cnt = 0
+                        active_menu = None
                         coloring.clear_fill()
                         _recognized_path_cnt = 0
                         last_recog_boxes = [(-1, -1, -1, -1, f"Image: {name}")]
@@ -988,7 +1008,15 @@ def main():
                                 0, 0, angle, (200, 255, 200), 3, cv2.LINE_AA)
 
         # ── 繪製 TYPE 模式的視線鍵盤 ────────────────────────
-        if mode_name == 'type' and not color_picker_active:
+        if mode_name in ('type', 'calc') and not color_picker_active:
+            # 若是 CALC 模式，強制鎖定在數字與符號鍵盤
+            if mode_name == 'calc':
+                try:
+                    keyboard.layout_idx = keyboard.layout_names.index('NUM / SYM')
+                    keyboard._build_layout()
+                except ValueError:
+                    pass
+                    
             # 在 HAND 模式下使用手部游標，否則使用視線游標
             kb_pt = gaze_pt if TRACK_MODES[track_mode_idx] != 'HAND' else hover_point
             typed_key = keyboard.update_and_draw(disp, kb_pt, is_blinking, curr_time, recognized_text)
@@ -1000,6 +1028,8 @@ def main():
                         
                 if typed_key == 'SPACE':
                     recognized_text += " "
+                elif typed_key == 'ENTER':
+                    recognized_text += "\n"
                 elif typed_key == 'BKSP':
                     recognized_text = recognized_text[:-1]
                 elif typed_key == 'CLEAR':
